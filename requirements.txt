@@ -1,0 +1,105 @@
+# SocialVision: Advanced Facial Recognition Search Engine
+# Python Dependencies for Academic Research Project
+# Developer: Mihretab N. Afework (mtabdevt@gmail.com)
+
+# Core Web Framework
+streamlit>=1.39.0
+gradio>=4.44.0
+
+# Computer Vision and Machine Learning
+opencv-python>=4.10.0
+face-recognition>=1.3.0
+dlib>=19.24.6
+mediapipe>=0.10.18
+tensorflow>=2.18.0
+torch>=2.5.1
+torchvision>=0.20.1
+
+# Data Processing and Analysis
+numpy>=2.1.3
+pandas>=2.2.3
+scipy>=1.14.1
+scikit-learn>=1.5.2
+matplotlib>=3.9.2
+seaborn>=0.13.2
+plotly>=5.24.1
+
+# Image Processing
+Pillow>=11.0.0
+imageio>=2.36.0
+scikit-image>=0.24.0
+
+# Firebase and Cloud Services
+firebase-admin>=6.6.0
+google-cloud-firestore>=2.19.0
+google-cloud-storage>=2.18.2
+
+# Web Scraping and HTTP
+requests>=2.32.3
+beautifulsoup4>=4.12.3
+selenium>=4.26.1
+urllib3>=2.2.3
+
+# Data Validation and Processing
+pydantic>=2.9.2
+python-dotenv>=1.0.1
+python-multipart>=0.0.12
+
+# API Development (Optional)
+fastapi>=0.115.4
+uvicorn>=0.32.0
+flask>=3.1.0
+
+# Testing and Quality Assurance
+pytest>=8.3.3
+pytest-cov>=6.0.0
+black>=24.10.0
+flake8>=7.1.1
+mypy>=1.13.0
+
+# Utilities
+tqdm>=4.67.1
+python-dateutil>=2.9.0
+pytz>=2024.2
+click>=8.1.7
+
+# Development Tools
+jupyter>=1.1.1
+ipykernel>=6.29.5
+notebook>=7.2.2
+
+# Performance and Optimization
+numba>=0.60.0
+cython>=3.0.11
+
+# Security and Authentication
+cryptography>=43.0.3
+PyJWT>=2.10.1
+
+# Configuration Management
+pyyaml>=6.0.2
+toml>=0.10.2
+configparser>=7.1.0
+
+# Logging and Monitoring
+loguru>=0.7.2
+python-json-logger>=2.0.7
+
+# Database Utilities
+sqlalchemy>=2.0.36
+pymongo>=4.10.1
+
+# Async Support
+aiohttp>=3.11.7
+asyncio>=3.4.3
+
+# Documentation
+sphinx>=8.1.3
+mkdocs>=1.6.1
+mkdocs-material>=9.5.44
+
+# Version Control Integration
+gitpython>=3.1.43
+
+# Environment Management
+python-decouple>=3.8
