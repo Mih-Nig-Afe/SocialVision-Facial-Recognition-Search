@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  socialvision:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: socialvision-app
+    ports:
+      - "8501:8501"  # Streamlit
+      - "8000:8000"  # FastAPI (optional)
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_LOGGER_LEVEL=info
+      - FIREBASE_CONFIG_PATH=/app/config/firebase_config.json
+    networks:
+      - socialvision-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  socialvision-network:
+    driver: bridge
+
+volumes:
+  data:
+  uploads:
+  logs:
+  models:
+  config:
+
