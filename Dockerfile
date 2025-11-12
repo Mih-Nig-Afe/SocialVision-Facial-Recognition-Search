@@ -23,6 +23,8 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     libglx0 \
     libglx-dev \
     libgl1-mesa-glx \
+    libgl1-mesa-dri \
+    libglx-mesa0 \
     curl \
     cmake \
     build-essential \
@@ -41,6 +43,8 @@ RUN pip install --upgrade pip setuptools wheel && \
     pip install --default-timeout=3600 --retries 10 -r requirements.txt
 
 # Copy application code
+# Force rebuild by adding a unique comment
+# Rebuild 2025-11-12 15:50
 COPY . .
 
 # Create necessary directories
