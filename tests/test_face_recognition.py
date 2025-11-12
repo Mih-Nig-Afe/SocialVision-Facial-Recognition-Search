@@ -4,9 +4,9 @@ Tests for face recognition engine
 
 import pytest
 import numpy as np
-import cv2
 from pathlib import Path
 import tempfile
+from PIL import Image
 from src.face_recognition_engine import FaceRecognitionEngine
 from src.image_utils import ImageProcessor
 
@@ -20,9 +20,13 @@ def face_engine():
 @pytest.fixture
 def sample_image():
     """Create a sample image for testing"""
-    # Create a simple test image (100x100 RGB)
-    image = np.ones((100, 100, 3), dtype=np.uint8) * 255
-    return cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    # Create a simple test image (100x100 RGB) using PIL
+    pil_image = Image.new("RGB", (100, 100), color="white")
+    # Convert to numpy array in BGR format
+    image = np.array(pil_image)
+    # Convert RGB to BGR
+    image = image[:, :, ::-1]
+    return image
 
 
 def test_face_engine_initialization(face_engine):
@@ -47,10 +51,10 @@ def test_extract_embeddings_empty(face_engine, sample_image):
 
 def test_compare_faces(face_engine):
     """Test face comparison"""
-    # Create dummy embeddings
-    known = np.random.rand(5, 128)
+    # Create dummy embeddings (512-dim for VGGFace2)
+    known = np.random.rand(5, 512)
     test = known[0]
-    
+
     matches = face_engine.compare_faces(known, test, tolerance=0.6)
     assert isinstance(matches, np.ndarray)
     assert len(matches) == 5
@@ -58,9 +62,9 @@ def test_compare_faces(face_engine):
 
 def test_face_distance(face_engine):
     """Test face distance calculation"""
-    known = np.random.rand(5, 128)
+    known = np.random.rand(5, 512)
     test = known[0]
-    
+
     distances = face_engine.face_distance(known, test)
     assert isinstance(distances, np.ndarray)
     assert len(distances) == 5
@@ -76,11 +80,12 @@ def test_process_image_nonexistent(face_engine):
 
 def test_batch_process_images(face_engine):
     """Test batch processing"""
-    results = face_engine.batch_process_images(["/nonexistent/1.jpg", "/nonexistent/2.jpg"])
+    results = face_engine.batch_process_images(
+        ["/nonexistent/1.jpg", "/nonexistent/2.jpg"]
+    )
     assert isinstance(results, dict)
     assert len(results) == 0
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

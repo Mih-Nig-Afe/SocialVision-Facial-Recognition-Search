@@ -7,7 +7,9 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONPATH="/app" \
-    LIBGL_ALWAYS_INDIRECT=1
+    LIBGL_ALWAYS_INDIRECT=1 \
+    DISPLAY="" \
+    QT_QPA_PLATFORM=offscreen
 
 # Install minimal system dependencies
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
@@ -20,11 +22,15 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     libglvnd-dev \
     libglx0 \
     libglx-dev \
+    libgl1-mesa-glx \
     curl \
     cmake \
     build-essential \
     git \
-    && rm -rf /var/lib/apt/lists/*
+    gcc \
+    g++ \
+    make \
+    && rm -rf /var/lib/apt/lists/* || true
 
 # Create app directory
 WORKDIR /app
