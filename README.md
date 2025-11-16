@@ -45,20 +45,35 @@ SocialVision is an advanced facial recognition search engine designed for Instag
 
 ```text
 SocialVision-Facial-Recognition-Search/
-├── docs/
-│   ├── SocialVision_Technical_Proposal.md
-│   └── API_Documentation.md
-├── src/
-│   ├── app.py                 # Main Streamlit application
-│   ├── face_recognition/      # Face recognition modules
-│   ├── database/             # Firebase integration
-│   └── utils/                # Utility functions
-├── tests/
-│   └── test_*.py             # Unit tests
-├── requirements.txt          # Python dependencies
-├── .gitignore               # Git ignore file
-├── LICENSE                  # MIT License
-└── README.md               # This file
+├── docs/                          # Documentation directory
+│   ├── README.md                  # Documentation index
+│   ├── PROJECT_STATUS.md          # Current project status and capabilities
+│   ├── TESTING_GUIDE.md           # Comprehensive testing guide
+│   ├── DEVELOPMENT_ROADMAP.md     # Development plan and roadmap
+│   └── SocialVision_Technical_Proposal.md  # Technical proposal
+├── src/                           # Source code
+│   ├── app.py                     # Main Streamlit application
+│   ├── face_recognition_engine.py # Face recognition engine
+│   ├── database.py                # Local JSON database
+│   ├── search_engine.py           # Search engine
+│   ├── image_utils.py             # Image processing utilities
+│   ├── config.py                  # Configuration management
+│   └── logger.py                  # Logging setup
+├── tests/                         # Test suite
+│   ├── test_face_recognition.py   # Face recognition tests
+│   ├── test_database.py           # Database tests
+│   └── test_search_engine.py      # Search engine tests
+├── data/                          # Data directory (database, etc.)
+├── config/                        # Configuration files
+├── logs/                          # Log files
+├── uploads/                       # Uploaded images
+├── models/                        # ML models directory
+├── requirements.txt               # Python dependencies
+├── pytest.ini                    # Pytest configuration
+├── Dockerfile                     # Docker configuration
+├── docker-compose.yml             # Docker Compose config
+├── LICENSE                        # MIT License
+└── README.md                      # This file
 ```
 
 ## 🎓 Academic Objectives
@@ -70,9 +85,19 @@ SocialVision-Facial-Recognition-Search/
 
 ## 📖 Documentation
 
-- **[Technical Proposal](docs/SocialVision_Technical_Proposal.md)** - Comprehensive project proposal
-- **[API Documentation](docs/API_Documentation.md)** - API reference and usage guide
-- **[Installation Guide](docs/Installation.md)** - Setup and deployment instructions
+Comprehensive documentation is available in the [`docs/`](docs/) directory:
+
+- **[📊 Project Status](docs/PROJECT_STATUS.md)** - Current project status, completed features, and capabilities
+- **[🧪 Testing Guide](docs/TESTING_GUIDE.md)** - How to test the current version and capabilities
+- **[🗺️ Development Roadmap](docs/DEVELOPMENT_ROADMAP.md)** - Development plan, phases, and future goals
+- **[📋 Technical Proposal](docs/SocialVision_Technical_Proposal.md)** - Comprehensive technical proposal and architecture
+- **[📚 Documentation Index](docs/README.md)** - Complete documentation index
+
+### Quick Links
+
+- **Current Status:** 60% Complete - See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md)
+- **How to Test:** See [TESTING_GUIDE.md](docs/TESTING_GUIDE.md)
+- **What's Next:** See [DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md)
 
 ## 🔧 Quick Start
 
@@ -127,13 +152,29 @@ SocialVision-Facial-Recognition-Search/
 - **Storage**: 2GB free space
 - **Internet**: Required for Firebase and model downloads
 
-## 📊 Project Timeline
+## 📊 Project Status
 
-- **Phase 1 (Weeks 1-2):** Foundation and Setup
-- **Phase 2 (Weeks 3-4):** Data Collection and Processing
-- **Phase 3 (Weeks 5-6):** Search Engine Development
-- **Phase 4 (Weeks 7-8):** User Interface Development
-- **Phase 5 (Weeks 9-10):** Testing and Optimization
+**Current Development Level:** 60% Complete  
+**Current Phase:** Phase 4 (User Interface Development) - In Progress
+
+### Completed Phases ✅
+- **Phase 1:** Foundation and Setup (100%)
+- **Phase 3:** Search Engine Development (100%)
+
+### In Progress ⚠️
+- **Phase 2:** Data Collection and Processing (50%)
+- **Phase 4:** User Interface Development (90%)
+- **Phase 5:** Testing and Optimization (40%)
+
+### Key Features Completed
+- ✅ Face detection and embedding extraction
+- ✅ Local JSON database system
+- ✅ Similarity search engine
+- ✅ Streamlit web interface
+- ✅ Image processing utilities
+- ✅ Unit test suite
+
+For detailed status, see [PROJECT_STATUS.md](docs/PROJECT_STATUS.md)
 
 ## 🤝 Contributing
 
