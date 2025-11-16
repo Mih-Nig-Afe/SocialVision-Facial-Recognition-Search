@@ -9,7 +9,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH="/app" \
     LIBGL_ALWAYS_INDIRECT=1 \
     DISPLAY="" \
-    QT_QPA_PLATFORM=offscreen
+    QT_QPA_PLATFORM=offscreen \
+    LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu:/usr/local/lib
 
 # Install minimal system dependencies
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
@@ -22,7 +23,7 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     libglvnd-dev \
     libglx0 \
     libglx-dev \
-    libgl1-mesa-glx \
+    libgl1 \
     libgl1-mesa-dri \
     libglx-mesa0 \
     curl \
@@ -39,8 +40,13 @@ WORKDIR /app
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --default-timeout=3600 --retries 10 -r requirements.txt
+# Use an extended timeout when upgrading pip/setuptools to avoid network read timeouts,
+# then install project dependencies. Ensure standard OpenCV (cv2) is available for DeepFace.
+RUN pip install --default-timeout=3600 --upgrade pip setuptools wheel && \
+    pip install --default-timeout=3600 --retries 10 -r requirements.txt && \
+    pip uninstall -y opencv-python || true && \
+    pip uninstall -y opencv-python-headless || true && \
+    pip install --default-timeout=3600 opencv-python==4.10.0.84
 
 # Copy application code
 # Force rebuild by adding a unique comment
