@@ -142,9 +142,24 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 
 5. **Run the application**
 
+   **Option A: Using Docker (Recommended)**
+   ```bash
+   # Build and start with Docker
+   docker-compose build
+   docker-compose up -d
+   
+   # Or use the quick demo script
+   ./docker-demo.sh
+   
+   # Access at http://localhost:8501
+   ```
+
+   **Option B: Local Installation**
    ```bash
    streamlit run src/app.py
    ```
+
+   **For detailed Docker instructions, see [DOCKER_TESTING_GUIDE.md](docs/DOCKER_TESTING_GUIDE.md)**
 
 ### System Requirements
 

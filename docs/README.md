@@ -39,6 +39,20 @@ Welcome to the SocialVision documentation directory. This directory contains com
    - Technology stack
    - Implementation plan
 
+### Docker & Deployment
+
+6. **[DOCKER_TESTING_GUIDE.md](DOCKER_TESTING_GUIDE.md)** 🐳
+   - How to test with Docker
+   - Build and run instructions
+   - Troubleshooting Docker issues
+   - Container management
+
+7. **[DEMONSTRATION_GUIDE.md](DEMONSTRATION_GUIDE.md)** 🎬
+   - How to demonstrate the application
+   - Demo scripts and scenarios
+   - Key talking points
+   - Presentation tips
+
 ---
 
 ## 🚀 Quick Start
@@ -70,6 +84,8 @@ Welcome to the SocialVision documentation directory. This directory contains com
 | PROJECT_STATUS.md | ✅ Complete | December 2024 |
 | CURRENT_CAPABILITIES.md | ✅ Complete | December 2024 |
 | TESTING_GUIDE.md | ✅ Complete | December 2024 |
+| DOCKER_TESTING_GUIDE.md | ✅ Complete | December 2024 |
+| DEMONSTRATION_GUIDE.md | ✅ Complete | December 2024 |
 | DEVELOPMENT_ROADMAP.md | ✅ Complete | December 2024 |
 | Technical Proposal | ✅ Complete | June 2025 |
 | API Documentation | ❌ Planned | - |

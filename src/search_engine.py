@@ -74,14 +74,31 @@ class SearchEngine:
             Dictionary with search results for each detected face
         """
         try:
+            logger.info("Starting face detection in search_by_image...")
             # Detect faces
             face_locations = self.face_engine.detect_faces(image)
+            logger.info(f"Face detection completed. Found {len(face_locations)} face(s)")
+            
             if not face_locations:
                 logger.warning("No faces detected in query image")
                 return {"faces": [], "total_matches": 0}
             
+            logger.info("Extracting face embeddings...")
             # Extract embeddings
             embeddings = self.face_engine.extract_face_embeddings(image, face_locations)
+            logger.info(f"Extracted {len(embeddings)} embedding(s)")
+            
+            if len(embeddings) == 0:
+                logger.warning("No embeddings extracted - DeepFace may not be available")
+                # Return empty results but indicate faces were detected
+                return {
+                    "faces": [{
+                        "face_index": i,
+                        "location": loc,
+                        "matches": []
+                    } for i, loc in enumerate(face_locations)],
+                    "total_matches": 0
+                }
             
             # Search for each face
             results = {
@@ -89,7 +106,12 @@ class SearchEngine:
                 "total_matches": 0
             }
             
+            logger.info(f"Searching database for {len(embeddings)} face(s)...")
             for i, embedding in enumerate(embeddings):
+                if len(embedding) == 0:
+                    logger.warning(f"Empty embedding for face {i}, skipping search")
+                    continue
+                    
                 face_results = self.search_by_embedding(
                     embedding,
                     threshold=threshold,
@@ -98,7 +120,7 @@ class SearchEngine:
                 
                 results["faces"].append({
                     "face_index": i,
-                    "location": face_locations[i],
+                    "location": face_locations[i] if i < len(face_locations) else None,
                     "matches": face_results
                 })
                 results["total_matches"] += len(face_results)
@@ -107,7 +129,7 @@ class SearchEngine:
             return results
         
         except Exception as e:
-            logger.error(f"Error searching by image: {e}")
+            logger.error(f"Error searching by image: {e}", exc_info=True)
             return {"faces": [], "total_matches": 0}
     
     def get_unique_usernames(self, search_results: Dict) -> List[str]:

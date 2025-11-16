@@ -10,7 +10,11 @@ gradio==4.44.0
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
 scipy==1.14.1
-deepface==0.0.75
+# DeepFace with compatible TensorFlow/Keras versions (fixes LocallyConnected2D issue)
+# Using TensorFlow 2.16+ with DeepFace 0.0.88+ for Keras 3 compatibility
+tensorflow>=2.16.0,<2.17.0
+keras>=3.0.0,<4.0.0
+deepface>=0.0.88
 
 # Data Processing and Analysis
 pandas==2.2.3

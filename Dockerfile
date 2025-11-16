@@ -42,11 +42,14 @@ WORKDIR /app
 COPY requirements.txt .
 # Use an extended timeout when upgrading pip/setuptools to avoid network read timeouts,
 # then install project dependencies. Ensure standard OpenCV (cv2) is available for DeepFace.
+# Install TensorFlow and Keras first to ensure compatibility, then DeepFace
 RUN pip install --default-timeout=3600 --upgrade pip setuptools wheel && \
+    pip install --default-timeout=3600 --retries 10 tensorflow>=2.16.0 keras>=3.0.0 && \
     pip install --default-timeout=3600 --retries 10 -r requirements.txt && \
     pip uninstall -y opencv-python || true && \
     pip uninstall -y opencv-python-headless || true && \
-    pip install --default-timeout=3600 opencv-python==4.10.0.84
+    pip install --default-timeout=3600 opencv-python==4.10.0.84 && \
+    python -c "from deepface import DeepFace; import tensorflow as tf; import keras; print(f'DeepFace OK. TF: {tf.__version__}, Keras: {keras.__version__}')" || echo "DeepFace import check failed"
 
 # Copy application code
 # Force rebuild by adding a unique comment

@@ -138,12 +138,21 @@ def main():
 
                         # Perform search
                         st.subheader("Search Results")
-                        results = search_engine.search_by_image(
-                            image, threshold=similarity_threshold, top_k=top_k
-                        )
+                        try:
+                            results = search_engine.search_by_image(
+                                image, threshold=similarity_threshold, top_k=top_k
+                            )
+                        except Exception as search_error:
+                            st.error(f"Error during search: {search_error}")
+                            logger.error(f"Search error: {search_error}", exc_info=True)
+                            results = {"faces": [], "total_matches": 0}
 
                         if results["total_matches"] == 0:
-                            st.warning("No matching faces found in database")
+                            # Check if faces were detected but no matches found
+                            if results.get("faces") and len(results["faces"]) > 0:
+                                st.info(f"Detected {len(results['faces'])} face(s) but no matches found in database. Try adding faces to the database first.")
+                            else:
+                                st.warning("No matching faces found in database")
                         else:
                             # Get top usernames
                             top_users = search_engine.get_top_usernames(
@@ -222,19 +231,75 @@ def main():
                             if not face_locations:
                                 st.warning("No faces detected in image")
                             else:
+                                st.info(f"Detected {len(face_locations)} face(s). Extracting embeddings...")
                                 embeddings = face_engine.extract_face_embeddings(
                                     image, face_locations
                                 )
 
-                                # Add to database
-                                added_count = 0
-                                for embedding in embeddings:
-                                    if db.add_face(
-                                        embedding.tolist(), username, source
-                                    ):
-                                        added_count += 1
+                                # Check if embeddings were extracted
+                                if embeddings is None:
+                                    st.error(
+                                        "Failed to extract face embeddings (returned None). "
+                                        "DeepFace may not be available or there was an error. "
+                                        "Please check the logs for details."
+                                    )
+                                    logger.error("No embeddings extracted - returned None")
+                                elif isinstance(embeddings, np.ndarray):
+                                    # Check if array is empty
+                                    if embeddings.size == 0:
+                                        st.error(
+                                            "Failed to extract face embeddings (empty array). "
+                                            "DeepFace may not be available or there was an error. "
+                                            "Please check the logs for details."
+                                        )
+                                        logger.error("No embeddings extracted - empty numpy array")
+                                    else:
+                                        # Handle both 1D and 2D embedding arrays
+                                        if len(embeddings.shape) == 1:
+                                            # Single embedding, convert to list of one
+                                            embeddings = [embeddings]
+                                        elif len(embeddings.shape) == 2:
+                                            # Multiple embeddings, iterate
+                                            embeddings = list(embeddings)
+                                        else:
+                                            st.error(f"Unexpected embedding shape: {embeddings.shape}")
+                                            embeddings = []
+                                else:
+                                    st.error(f"Unexpected embedding type: {type(embeddings)}")
+                                    logger.error(f"Unexpected embedding type: {type(embeddings)}")
+                                    embeddings = []
 
-                                st.success(f"Added {added_count} face(s) to database")
+                                # Add to database (only if we have valid embeddings)
+                                if isinstance(embeddings, list) and len(embeddings) > 0:
+                                    added_count = 0
+                                    for i, embedding in enumerate(embeddings):
+                                        try:
+                                            # Convert numpy array to list
+                                            embedding_list = embedding.tolist() if hasattr(embedding, 'tolist') else list(embedding)
+                                            
+                                            # Validate embedding
+                                            if not embedding_list or len(embedding_list) == 0:
+                                                logger.warning(f"Empty embedding at index {i}, skipping")
+                                                continue
+                                            
+                                            if db.add_face(
+                                                embedding_list, username, source
+                                            ):
+                                                added_count += 1
+                                                logger.info(f"Successfully added face {i+1}/{len(embeddings)} for {username}")
+                                            else:
+                                                logger.error(f"Failed to add face {i+1}/{len(embeddings)} to database")
+                                        except Exception as e:
+                                            logger.error(f"Error adding face {i+1}: {e}", exc_info=True)
+                                            st.error(f"Error adding face {i+1}: {e}")
+
+                                    if added_count > 0:
+                                        st.success(f"✅ Added {added_count} face(s) to database for @{username}")
+                                    else:
+                                        st.error(
+                                            "Failed to add any faces to database. "
+                                            "Please check the logs for error details."
+                                        )
 
                     finally:
                         Path(tmp_path).unlink(missing_ok=True)

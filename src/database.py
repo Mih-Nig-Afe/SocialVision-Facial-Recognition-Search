@@ -50,10 +50,10 @@ class FaceDatabase:
         try:
             with open(self.db_path, "w") as f:
                 json.dump(self.data, f, indent=2)
-            logger.info("Database saved successfully")
+            logger.info(f"Database saved successfully to {self.db_path}")
             return True
         except Exception as e:
-            logger.error(f"Error saving database: {e}")
+            logger.error(f"Error saving database: {e}", exc_info=True)
             return False
     
     def add_face(
@@ -68,7 +68,7 @@ class FaceDatabase:
         Add a face embedding to database
         
         Args:
-            embedding: 128-dimensional face embedding
+            embedding: Face embedding (typically 128 or 512 dimensions)
             username: Instagram username
             source: Source of image (profile_pic, post, story, reel)
             image_url: URL of the image
@@ -78,6 +78,22 @@ class FaceDatabase:
             True if successful
         """
         try:
+            # Validate embedding
+            if not embedding:
+                logger.error("Empty embedding provided")
+                return False
+            
+            if not isinstance(embedding, list):
+                logger.error(f"Embedding must be a list, got {type(embedding)}")
+                return False
+            
+            embedding_dim = len(embedding)
+            if embedding_dim == 0:
+                logger.error("Embedding has zero dimensions")
+                return False
+            
+            logger.info(f"Adding face: username={username}, source={source}, embedding_dim={embedding_dim}")
+            
             face_record = {
                 "id": len(self.data["faces"]),
                 "embedding": embedding,
@@ -89,12 +105,18 @@ class FaceDatabase:
             }
             
             self.data["faces"].append(face_record)
-            self._save_database()
-            logger.info(f"Added face for user {username} from {source}")
-            return True
+            
+            if self._save_database():
+                logger.info(f"Successfully added face for user {username} from {source} (embedding_dim={embedding_dim})")
+                return True
+            else:
+                logger.error("Failed to save database after adding face")
+                # Remove the face from memory if save failed
+                self.data["faces"].pop()
+                return False
         
         except Exception as e:
-            logger.error(f"Error adding face: {e}")
+            logger.error(f"Error adding face: {e}", exc_info=True)
             return False
     
     def get_all_embeddings(self) -> np.ndarray:
