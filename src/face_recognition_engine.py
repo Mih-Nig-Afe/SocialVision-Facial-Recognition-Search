@@ -11,6 +11,63 @@ from src.config import get_config
 logger = setup_logger(__name__)
 config = get_config()
 
+# Supported DeepFace models / detector backends (per upstream docs)
+SUPPORTED_DEEPFACE_MODELS = {
+    "VGG-Face",
+    "Facenet",
+    "Facenet512",
+    "OpenFace",
+    "DeepFace",
+    "DeepID",
+    "ArcFace",
+    "Dlib",
+    "SFace",
+    "GhostFaceNet",
+}
+SUPPORTED_DETECTOR_BACKENDS = {
+    "opencv",
+    "ssd",
+    "mtcnn",
+    "retinaface",
+    "mediapipe",
+    "yolov8",
+    "yunet",
+    "fastmtcnn",
+    "dlib",
+}
+
+DEFAULT_DEEPFACE_MODEL = "Facenet512"
+DEFAULT_DETECTOR_BACKEND = "opencv"
+
+
+def _resolve_setting(
+    value: Optional[str], allowed: set, default: str, setting_name: str
+) -> str:
+    if value and value in allowed:
+        return value
+    if value and value not in allowed:
+        logger.warning(
+            "%s '%s' not supported by DeepFace. Falling back to %s.",
+            setting_name,
+            value,
+            default,
+        )
+    return default
+
+
+DEEPFACE_MODEL_NAME = _resolve_setting(
+    getattr(config, "DEEPFACE_MODEL", DEFAULT_DEEPFACE_MODEL),
+    SUPPORTED_DEEPFACE_MODELS,
+    DEFAULT_DEEPFACE_MODEL,
+    "DEEPFACE_MODEL",
+)
+DEEPFACE_DETECTOR_BACKEND = _resolve_setting(
+    getattr(config, "DEEPFACE_DETECTOR_BACKEND", DEFAULT_DETECTOR_BACKEND),
+    SUPPORTED_DETECTOR_BACKENDS,
+    DEFAULT_DETECTOR_BACKEND,
+    "DEEPFACE_DETECTOR_BACKEND",
+)
+
 try:
     # DeepFace is the preferred backend for face detection and embeddings.
     # However, it has a heavy dependency stack (TensorFlow / Keras) that can be
@@ -18,13 +75,16 @@ try:
     # application testable even when DeepFace cannot be imported, we treat it
     # as optional and gracefully degrade behaviour when it is unavailable.
     from deepface import DeepFace  # type: ignore
-    
+
     # Test that DeepFace actually works by doing a simple import check
     # This helps catch issues early
     import tensorflow as tf
     import keras
-    logger.info(f"DeepFace imported successfully. TensorFlow: {tf.__version__}, Keras: {keras.__version__}")
-    
+
+    logger.info(
+        f"DeepFace imported successfully. TensorFlow: {tf.__version__}, Keras: {keras.__version__}"
+    )
+
     HAS_DEEPFACE = True
 except Exception as exc:  # pragma: no cover - environment dependent
     DeepFace = None  # type: ignore[assignment]
@@ -34,8 +94,19 @@ except Exception as exc:  # pragma: no cover - environment dependent
         "FaceRecognitionEngine will run in degraded mode (no face "
         "detection or embedding extraction). Please check TensorFlow/Keras compatibility.",
         exc,
-        exc_info=True
+        exc_info=True,
     )
+
+# Optional: use face_recognition (dlib) as a fallback for embeddings when DeepFace
+# or TensorFlow/Keras stack is not available. This library provides 128-dim
+# dlib-based face encodings and works well as a lighter-weight fallback.
+try:
+    import face_recognition  # type: ignore
+
+    HAS_FACE_RECOG = True
+    logger.info("face_recognition (dlib) available as fallback for embeddings")
+except Exception:
+    HAS_FACE_RECOG = False
 
 # Try to import cv2, but make it optional
 try:
@@ -48,12 +119,14 @@ try:
         # For now, we'll use Haar cascades or DNN if available
         FACE_CASCADE = None
         try:
-            FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            FACE_CASCADE = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
             if FACE_CASCADE.empty():
                 FACE_CASCADE = None
         except Exception:
             FACE_CASCADE = None
-        
+
         # Try to initialize DNN face detector
         DNN_FACE_DETECTOR = None
         try:
@@ -98,7 +171,27 @@ class FaceRecognitionEngine:
         """
         # Always try DeepFace first for best accuracy
         if not HAS_DEEPFACE:
-            logger.warning("DeepFace not available, falling back to OpenCV (lower accuracy)")
+            logger.warning(
+                "DeepFace not available, falling back to OpenCV (lower accuracy)"
+            )
+            # If OpenCV isn't available but face_recognition is, use dlib-based detector
+            if not HAS_CV2 and HAS_FACE_RECOG:
+                try:
+                    logger.info(
+                        "OpenCV not available; using face_recognition for detection"
+                    )
+                    # face_recognition expects RGB
+                    rgb_image = image[:, :, ::-1] if image is not None else image
+                    locations = face_recognition.face_locations(
+                        rgb_image, model=self.model
+                    )
+                    return locations
+                except Exception as e:
+                    logger.error(
+                        f"face_recognition detection failed: {e}", exc_info=True
+                    )
+                    return []
+
             return self._detect_faces_opencv(image)
 
         try:
@@ -114,33 +207,32 @@ class FaceRecognitionEngine:
             # This is more reliable than extract_faces() which may return just arrays
             # Try opencv first (fastest), then fallback to others if needed
             objs = None
-            detector_backends = ['opencv', 'ssd']  # Start with fastest backends
-            
+            detector_backends = ["opencv", "ssd"]  # Start with fastest backends
+
             for backend in detector_backends:
                 try:
                     logger.info(f"Trying DeepFace with {backend} detector backend...")
                     objs = DeepFace.represent(
-                        rgb_image,
-                        enforce_detection=False,
-                        detector_backend=backend
+                        rgb_image, enforce_detection=False, detector_backend=backend
                     )
                     if objs and len(objs) > 0:
-                        logger.info(f"Successfully detected {len(objs)} face(s) using {backend} backend")
+                        logger.info(
+                            f"Successfully detected {len(objs)} face(s) using {backend} backend"
+                        )
                         break
                 except Exception as e:
                     logger.debug(f"{backend} backend failed: {e}")
                     continue
-            
+
             # If fast backends failed, try default (may be slower but more accurate)
             if not objs:
                 try:
                     logger.info("Trying DeepFace with default detector...")
-                    objs = DeepFace.represent(
-                        rgb_image,
-                        enforce_detection=False
-                    )
+                    objs = DeepFace.represent(rgb_image, enforce_detection=False)
                     if objs and len(objs) > 0:
-                        logger.info(f"Successfully detected {len(objs)} face(s) using default detector")
+                        logger.info(
+                            f"Successfully detected {len(objs)} face(s) using default detector"
+                        )
                 except Exception as e2:
                     logger.warning(f"DeepFace detection failed. Last error: {e2}")
                     # Fallback to OpenCV
@@ -151,11 +243,11 @@ class FaceRecognitionEngine:
 
             # Convert deepface format to (top, right, bottom, left)
             face_locations = []
-            
+
             if not objs:
                 logger.warning("No faces detected in image")
                 return []
-            
+
             for obj in objs:
                 # Extract facial_area from the returned object
                 if isinstance(obj, dict) and "facial_area" in obj:
@@ -186,23 +278,25 @@ class FaceRecognitionEngine:
                 return self._detect_faces_opencv(image)
             return []
 
-    def _detect_faces_opencv(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
+    def _detect_faces_opencv(
+        self, image: np.ndarray
+    ) -> List[Tuple[int, int, int, int]]:
         """
         Detect faces using OpenCV (fallback when DeepFace is unavailable)
-        
+
         Args:
             image: Input image as numpy array (BGR format from OpenCV)
-            
+
         Returns:
             List of face locations as (top, right, bottom, left) tuples
         """
         if not HAS_CV2:
             logger.warning("OpenCV not available for face detection")
             return []
-        
+
         try:
             logger.info("Starting OpenCV face detection...")
-            
+
             # Resize image if too large for faster processing
             height, width = image.shape[:2]
             max_dimension = 1000
@@ -210,41 +304,47 @@ class FaceRecognitionEngine:
                 scale = min(max_dimension / width, max_dimension / height)
                 new_width = int(width * scale)
                 new_height = int(height * scale)
-                image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
-                logger.info(f"Resized image to {new_width}x{new_height} for faster detection")
-            
+                image = cv2.resize(
+                    image, (new_width, new_height), interpolation=cv2.INTER_AREA
+                )
+                logger.info(
+                    f"Resized image to {new_width}x{new_height} for faster detection"
+                )
+
             # Convert to grayscale for face detection
             if len(image.shape) == 3:
                 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             else:
                 gray = image
-            
+
             face_locations = []
-            
+
             # Try using Haar Cascade first (built-in, always available)
             try:
                 logger.info("Loading Haar Cascade classifier...")
-                cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                cascade_path = (
+                    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+                )
                 face_cascade = cv2.CascadeClassifier(cascade_path)
-                
+
                 if face_cascade.empty():
                     logger.error(f"Failed to load Haar Cascade from {cascade_path}")
                     return []
-                
+
                 logger.info("Running face detection with Haar Cascade...")
                 # Optimized parameters for faster detection
                 faces = face_cascade.detectMultiScale(
                     gray,
                     scaleFactor=1.2,  # Slightly larger steps for speed
-                    minNeighbors=4,   # Reduced for better detection
-                    minSize=(50, 50), # Minimum face size
+                    minNeighbors=4,  # Reduced for better detection
+                    minSize=(50, 50),  # Minimum face size
                     flags=cv2.CASCADE_SCALE_IMAGE,
-                    maxSize=(gray.shape[1], gray.shape[0])  # Don't exceed image size
+                    maxSize=(gray.shape[1], gray.shape[0]),  # Don't exceed image size
                 )
-                
+
                 logger.info(f"Haar Cascade found {len(faces)} face(s)")
-                
-                for (x, y, w, h) in faces:
+
+                for x, y, w, h in faces:
                     # Convert to (top, right, bottom, left) format
                     # Adjust coordinates back to original image size if we resized
                     if width != image.shape[1] or height != image.shape[0]:
@@ -255,23 +355,74 @@ class FaceRecognitionEngine:
                         w = int(w * scale_x)
                         h = int(h * scale_y)
                     face_locations.append((y, x + w, y + h, x))
-                
+
                 if face_locations:
-                    logger.info(f"Detected {len(face_locations)} faces using OpenCV Haar Cascade")
+                    logger.info(
+                        f"Detected {len(face_locations)} faces using OpenCV Haar Cascade"
+                    )
                     return face_locations
                 else:
                     logger.warning("Haar Cascade found faces but conversion failed")
-                    
+
             except Exception as cascade_error:
-                logger.error(f"Haar Cascade detection failed: {cascade_error}", exc_info=True)
-            
+                logger.error(
+                    f"Haar Cascade detection failed: {cascade_error}", exc_info=True
+                )
+
             # If Haar Cascade didn't work, log and return empty
             logger.warning("OpenCV Haar Cascade detected no faces")
             return []
-            
+
         except Exception as e:
             logger.error(f"Error in OpenCV face detection: {e}", exc_info=True)
             return []
+
+    def _extract_embeddings_with_face_recognition(
+        self, image: np.ndarray, face_locations: List[Tuple[int, int, int, int]]
+    ) -> np.ndarray:
+        """Fallback embedding extraction using dlib-based face_recognition."""
+        if not HAS_FACE_RECOG:
+            logger.error(
+                "face_recognition fallback requested but library is unavailable"
+            )
+            return np.array([])
+
+        try:
+            logger.info(
+                "Using face_recognition (dlib) to extract embeddings as fallback"
+            )
+            if image is None:
+                return np.array([])
+
+            # Convert BGR to RGB if OpenCV is available, otherwise slice channels
+            rgb_image = (
+                cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if HAS_CV2 else image[:, :, ::-1]
+            )
+
+            # If DeepFace failed before producing locations, detect using dlib
+            locations = (
+                face_locations
+                if face_locations
+                else face_recognition.face_locations(rgb_image, model=self.model)
+            )
+
+            encodings = face_recognition.face_encodings(
+                rgb_image, known_face_locations=locations
+            )
+
+            if not encodings:
+                logger.warning("face_recognition extracted no embeddings")
+                return np.array([])
+
+            logger.info(f"Extracted {len(encodings)} embeddings via face_recognition")
+            return np.array(encodings)
+
+        except Exception as exc:  # pragma: no cover - env specific
+            logger.error(
+                f"face_recognition embedding extraction failed: {exc}",
+                exc_info=True,
+            )
+            return np.array([])
 
     def extract_face_embeddings(
         self, image: np.ndarray, face_locations: List[Tuple[int, int, int, int]]
@@ -287,8 +438,7 @@ class FaceRecognitionEngine:
             Array of face embeddings (N x embedding_dim for selected model)
         """
         if not HAS_DEEPFACE:
-            logger.error("Cannot extract embeddings: DeepFace not available")
-            return np.array([])
+            return self._extract_embeddings_with_face_recognition(image, face_locations)
 
         try:
             logger.info("Extracting face embeddings with DeepFace...")
@@ -304,9 +454,9 @@ class FaceRecognitionEngine:
             embedding_objs = DeepFace.represent(
                 rgb_image,
                 enforce_detection=False,
-                model_name="VGGFace2",  # VGGFace2 is fast and accurate
-                detector_backend='opencv',  # OpenCV is fastest detector
-                align=True  # Align faces for better accuracy
+                model_name=DEEPFACE_MODEL_NAME,
+                detector_backend=DEEPFACE_DETECTOR_BACKEND,
+                align=True,
             )
 
             if not embedding_objs:
@@ -324,7 +474,7 @@ class FaceRecognitionEngine:
 
         except Exception as e:
             logger.error(f"Error extracting embeddings: {e}", exc_info=True)
-            return np.array([])
+            return self._extract_embeddings_with_face_recognition(image, face_locations)
 
     def compare_faces(
         self,

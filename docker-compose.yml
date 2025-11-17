@@ -16,6 +16,7 @@ services:
       - ./logs:/app/logs
       - ./models:/app/models
       - ./config:/app/config
+      - deepface-cache:/root/.deepface
     environment:
       - PYTHONUNBUFFERED=1
       - STREAMLIT_SERVER_HEADLESS=true
@@ -43,4 +44,5 @@ volumes:
   logs:
   models:
   config:
+  deepface-cache:
 

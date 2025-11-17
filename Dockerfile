@@ -10,7 +10,10 @@ ENV PYTHONUNBUFFERED=1 \
     LIBGL_ALWAYS_INDIRECT=1 \
     DISPLAY="" \
     QT_QPA_PLATFORM=offscreen \
-    LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu:/usr/local/lib
+    LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/lib/aarch64-linux-gnu:/usr/local/lib \
+    DEEPFACE_HOME=/root \
+    DEEPFACE_MODEL=Facenet512 \
+    DEEPFACE_DETECTOR_BACKEND=opencv
 
 # Install minimal system dependencies
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
@@ -26,6 +29,8 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     libgl1 \
     libgl1-mesa-dri \
     libglx-mesa0 \
+    libopenblas-dev \
+    liblapack-dev \
     curl \
     cmake \
     build-essential \
@@ -44,12 +49,26 @@ COPY requirements.txt .
 # then install project dependencies. Ensure standard OpenCV (cv2) is available for DeepFace.
 # Install TensorFlow and Keras first to ensure compatibility, then DeepFace
 RUN pip install --default-timeout=3600 --upgrade pip setuptools wheel && \
-    pip install --default-timeout=3600 --retries 10 tensorflow>=2.16.0 keras>=3.0.0 && \
     pip install --default-timeout=3600 --retries 10 -r requirements.txt && \
-    pip uninstall -y opencv-python || true && \
-    pip uninstall -y opencv-python-headless || true && \
-    pip install --default-timeout=3600 opencv-python==4.10.0.84 && \
     python -c "from deepface import DeepFace; import tensorflow as tf; import keras; print(f'DeepFace OK. TF: {tf.__version__}, Keras: {keras.__version__}')" || echo "DeepFace import check failed"
+
+# Pre-fetch DeepFace weights so runtime workload doesn't redownload models
+RUN python - <<'PY'
+import os
+from pathlib import Path
+from deepface import DeepFace
+
+models = [os.environ.get("DEEPFACE_MODEL", "Facenet512")]
+weights_dir = Path(os.environ.get("DEEPFACE_HOME", "/root")) / ".deepface" / "weights"
+weights_dir.mkdir(parents=True, exist_ok=True)
+
+for model in dict.fromkeys(models):  # preserve order, avoid duplicates
+    try:
+        DeepFace.build_model(model)
+        print(f"Cached DeepFace model: {model}")
+    except Exception as exc:  # pragma: no cover - build-time diagnostic
+        print(f"Warning: could not cache {model}: {exc}")
+PY
 
 # Copy application code
 # Force rebuild by adding a unique comment

@@ -7,14 +7,19 @@ streamlit==1.39.0
 gradio==4.44.0
 
 # Computer Vision and Machine Learning
-opencv-python-headless==4.10.0.84
+# Use full OpenCV build so DeepFace and traditional pipelines share the same cv2 binary
+opencv-python==4.10.0.84
 numpy==1.26.4
 scipy==1.14.1
 # DeepFace with compatible TensorFlow/Keras versions (fixes LocallyConnected2D issue)
 # Using TensorFlow 2.16+ with DeepFace 0.0.88+ for Keras 3 compatibility
 tensorflow>=2.16.0,<2.17.0
 keras>=3.0.0,<4.0.0
+tf-keras==2.16.0
 deepface>=0.0.88
+# Dlib-based fallback embeddings + encodings for degraded mode
+face-recognition==1.3.0
+face-recognition-models==0.3.0
 
 # Data Processing and Analysis
 pandas==2.2.3
