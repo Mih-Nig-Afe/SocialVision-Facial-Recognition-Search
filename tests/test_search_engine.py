@@ -119,5 +119,52 @@ def test_get_top_usernames(search_engine):
     assert top_users[0]["username"] == "user1"
 
 
+def test_enrich_face_from_image_updates_existing_identity(temp_db):
+    """enrich_face_from_image should append embeddings to the matched username."""
+    base_embedding = [1.0, 0.0, 0.0, 0.0]
+    temp_db.add_face(base_embedding, "known_user", "profile")
+
+    engine = SearchEngine(temp_db)
+
+    class StubFaceEngine:
+        def detect_faces(self, image):
+            return [(0, 1, 1, 0)]
+
+        def extract_face_embeddings(self, image, face_locations):
+            return [{"deepface": [1.0, 0.0, 0.0, 0.0]}]
+
+    engine.face_engine = StubFaceEngine()
+    dummy_image = np.zeros((5, 5, 3), dtype=np.uint8)
+
+    result = engine.enrich_face_from_image(dummy_image, source="unit-test")
+
+    assert result["result"] == "Person found"
+    assert result["username"] == "known_user"
+    assert result["summary"]["added"] >= 1
+
+
+def test_enrich_face_from_image_returns_not_found(temp_db):
+    """When similarity is below threshold the pipeline should return not found."""
+    temp_db.add_face([0.0, 1.0, 0.0, 0.0], "other_user", "profile")
+
+    engine = SearchEngine(temp_db)
+
+    class StubFaceEngine:
+        def detect_faces(self, image):
+            return [(0, 1, 1, 0)]
+
+        def extract_face_embeddings(self, image, face_locations):
+            return [{"deepface": [1.0, 0.0, 0.0, 0.0]}]
+
+    engine.face_engine = StubFaceEngine()
+    dummy_image = np.zeros((5, 5, 3), dtype=np.uint8)
+
+    result = engine.enrich_face_from_image(
+        dummy_image, source="unit-test", threshold=0.99
+    )
+
+    assert result["result"] == "Person not found."
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

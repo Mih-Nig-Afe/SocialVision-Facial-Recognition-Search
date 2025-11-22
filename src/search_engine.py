@@ -3,7 +3,7 @@ Search engine for finding similar faces
 """
 
 import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from src.logger import setup_logger
 from src.database import FaceDatabase
 from src.face_recognition_engine import FaceRecognitionEngine
@@ -12,6 +12,7 @@ from src.config import get_config
 logger = setup_logger(__name__)
 config = get_config()
 DEFAULT_SIMILARITY_THRESHOLD = getattr(config, "FACE_SIMILARITY_THRESHOLD", 0.35)
+DEFAULT_EMBEDDING_SOURCE = getattr(config, "DEFAULT_EMBEDDING_SOURCE", "deepface")
 
 
 class SearchEngine:
@@ -30,7 +31,7 @@ class SearchEngine:
 
     def search_by_embedding(
         self,
-        query_embedding: np.ndarray,
+        query_embedding: Any,
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         top_k: int = 50,
     ) -> List[Dict]:
@@ -89,7 +90,7 @@ class SearchEngine:
             logger.info("Extracting face embeddings...")
             # Extract embeddings
             embeddings = self.face_engine.extract_face_embeddings(image, face_locations)
-            logger.info(f"Extracted {len(embeddings)} embedding(s)")
+            logger.info(f"Extracted {len(embeddings)} embedding bundle(s)")
 
             if len(embeddings) == 0:
                 logger.warning(
@@ -108,21 +109,20 @@ class SearchEngine:
             results = {"faces": [], "total_matches": 0}
 
             logger.info(f"Searching database for {len(embeddings)} face(s)...")
-            for i, embedding in enumerate(embeddings):
-                if len(embedding) == 0:
-                    logger.warning(f"Empty embedding for face {i}, skipping search")
-                    continue
-
-                face_results = self.search_by_embedding(
-                    embedding, threshold=threshold, top_k=top_k
-                )
+            for i, location in enumerate(face_locations):
+                embedding = embeddings[i] if i < len(embeddings) else {}
+                if not embedding:
+                    logger.warning("No embeddings available for face %s", i)
+                    face_results = []
+                else:
+                    face_results = self.search_by_embedding(
+                        embedding, threshold=threshold, top_k=top_k
+                    )
 
                 results["faces"].append(
                     {
                         "face_index": i,
-                        "location": (
-                            face_locations[i] if i < len(face_locations) else None
-                        ),
+                        "location": location,
                         "matches": face_results,
                     }
                 )
@@ -136,6 +136,110 @@ class SearchEngine:
         except Exception as e:
             logger.error(f"Error searching by image: {e}", exc_info=True)
             return {"faces": [], "total_matches": 0}
+
+    def enrich_face_from_image(
+        self,
+        image: np.ndarray,
+        source: str = "unknown",
+        threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+        top_k: int = 10,
+    ) -> Dict:
+        """
+        Given an input image, detect the first face, extract a full embedding,
+        search the database at the identity (username) level, and if a matching
+        identity is found, append the new embedding(s) to that identity's
+        profile and return a structured summary. If no match found, returns
+        {"result": "Person not found."}.
+
+        This method focuses on enrichment: it makes the matched user's stored
+        embeddings broader and more representative over time.
+        """
+        try:
+            # Detect faces
+            face_locations = self.face_engine.detect_faces(image)
+            if not face_locations:
+                logger.warning("No faces detected for enrichment")
+                return {"result": "Person not found."}
+
+            # Extract embeddings for faces (we will use the first face for identity search)
+            embeddings = self.face_engine.extract_face_embeddings(image, face_locations)
+            if embeddings is None or len(embeddings) == 0:
+                logger.warning("No embeddings extracted for enrichment")
+                return {"result": "Person not found."}
+
+            # Ensure embeddings is a 2D array/list; take first embedding for identification
+            first_emb_bundle = embeddings[0] if embeddings else {}
+            first_emb = None
+            if isinstance(first_emb_bundle, dict):
+                priority = [DEFAULT_EMBEDDING_SOURCE]
+                for key in first_emb_bundle.keys():
+                    if key not in priority:
+                        priority.append(key)
+                for key in priority:
+                    candidate = first_emb_bundle.get(key)
+                    if candidate:
+                        first_emb = candidate
+                        break
+            else:
+                first_emb = first_emb_bundle
+
+            if not first_emb:
+                logger.warning("No suitable primary embedding for enrichment")
+                return {"result": "Person not found."}
+
+            # Search for identity-level matches (uses aggregated profile embeddings)
+            identity_matches = self.database.search_identity(
+                first_emb, threshold=threshold, top_k=top_k
+            )
+
+            if not identity_matches:
+                logger.info("No identity-level matches found")
+                return {"result": "Person not found."}
+
+            # Pick top identity match
+            top = identity_matches[0]
+            username = top["username"]
+            similarity = top["similarity_score"]
+
+            # Append all extracted embeddings for this image to the matched username
+            # Convert numpy arrays to lists if necessary
+            emb_lists = []
+            for emb in embeddings:
+                if isinstance(emb, dict):
+                    emb_lists.append(emb)
+                    continue
+                try:
+                    emb_list = emb.tolist() if hasattr(emb, "tolist") else list(emb)
+                    emb_lists.append({DEFAULT_EMBEDDING_SOURCE: emb_list})
+                except Exception:
+                    logger.warning(
+                        "Skipping a malformed embedding when preparing to append"
+                    )
+
+            summary = self.database.append_embeddings_to_username(
+                username, emb_lists, source
+            )
+
+            # Find most recent face id(s) appended for returned detail
+            faces_for_user = self.database.get_faces_by_username(username)
+            last_added_id = None
+            if faces_for_user:
+                last_added_id = max(face.get("id", -1) for face in faces_for_user)
+
+            result = {
+                "result": "Person found",
+                "username": username,
+                "match_confidence": float(similarity),
+                "summary": summary,
+                "last_added_face_id": last_added_id,
+            }
+
+            logger.info(f"Enriched profile for {username}: {summary}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error during enrichment: {e}", exc_info=True)
+            return {"result": "Person not found."}
 
     def get_unique_usernames(self, search_results: Dict) -> List[str]:
         """

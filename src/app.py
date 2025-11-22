@@ -4,7 +4,6 @@ Main Streamlit Application
 """
 
 import streamlit as st
-import numpy as np
 from pathlib import Path
 import tempfile
 from src.config import get_config
@@ -13,6 +12,11 @@ from src.face_recognition_engine import FaceRecognitionEngine
 from src.database import FaceDatabase
 from src.search_engine import SearchEngine
 from src.image_utils import ImageProcessor
+
+try:  # numpy is optional but helps normalize DeepFace payloads
+    import numpy as np
+except ImportError:  # pragma: no cover - numpy is a declared dependency
+    np = None
 
 # Try to import cv2, but make it optional
 try:
@@ -24,7 +28,33 @@ except ImportError:
 
 # Configuration
 config = get_config()
+DEFAULT_EMBEDDING_SOURCE = getattr(config, "DEFAULT_EMBEDDING_SOURCE", "deepface")
 logger = setup_logger(__name__)
+
+
+def _normalize_embedding_value(value):
+    """Convert numpy arrays to vanilla lists and drop empty payloads."""
+
+    if value is None:
+        return None
+
+    # Prefer numpy-specific handling when available.
+    if np is not None and isinstance(value, np.ndarray):
+        if value.size == 0:
+            return None
+        return value.tolist()
+
+    if hasattr(value, "tolist"):
+        normalized = value.tolist()
+        if isinstance(normalized, (list, tuple)) and not normalized:
+            return None
+        return normalized
+
+    if isinstance(value, (list, tuple)):
+        return list(value) if value else None
+
+    return value
+
 
 # Page configuration
 st.set_page_config(
@@ -150,7 +180,9 @@ def main():
                         if results["total_matches"] == 0:
                             # Check if faces were detected but no matches found
                             if results.get("faces") and len(results["faces"]) > 0:
-                                st.info(f"Detected {len(results['faces'])} face(s) but no matches found in database. Try adding faces to the database first.")
+                                st.info(
+                                    f"Detected {len(results['faces'])} face(s) but no matches found in database. Try adding faces to the database first."
+                                )
                             else:
                                 st.warning("No matching faces found in database")
                         else:
@@ -231,70 +263,88 @@ def main():
                             if not face_locations:
                                 st.warning("No faces detected in image")
                             else:
-                                st.info(f"Detected {len(face_locations)} face(s). Extracting embeddings...")
+                                st.info(
+                                    f"Detected {len(face_locations)} face(s). Extracting embeddings..."
+                                )
                                 embeddings = face_engine.extract_face_embeddings(
                                     image, face_locations
                                 )
 
-                                # Check if embeddings were extracted
-                                if embeddings is None:
+                                if not embeddings:
                                     st.error(
-                                        "Failed to extract face embeddings (returned None). "
-                                        "DeepFace may not be available or there was an error. "
-                                        "Please check the logs for details."
+                                        "Failed to extract face embeddings. DeepFace and dlib backends "
+                                        "may both be unavailable. Please check the logs for details."
                                     )
-                                    logger.error("No embeddings extracted - returned None")
-                                elif isinstance(embeddings, np.ndarray):
-                                    # Check if array is empty
-                                    if embeddings.size == 0:
-                                        st.error(
-                                            "Failed to extract face embeddings (empty array). "
-                                            "DeepFace may not be available or there was an error. "
-                                            "Please check the logs for details."
-                                        )
-                                        logger.error("No embeddings extracted - empty numpy array")
-                                    else:
-                                        # Handle both 1D and 2D embedding arrays
-                                        if len(embeddings.shape) == 1:
-                                            # Single embedding, convert to list of one
-                                            embeddings = [embeddings]
-                                        elif len(embeddings.shape) == 2:
-                                            # Multiple embeddings, iterate
-                                            embeddings = list(embeddings)
-                                        else:
-                                            st.error(f"Unexpected embedding shape: {embeddings.shape}")
-                                            embeddings = []
+                                    logger.error(
+                                        "No embeddings extracted from available backends"
+                                    )
+                                elif not isinstance(embeddings, list):
+                                    st.error(
+                                        f"Unexpected embedding payload type: {type(embeddings)}. "
+                                        "Please check the logs."
+                                    )
+                                    logger.error(
+                                        "FaceRecognitionEngine returned unexpected type %s",
+                                        type(embeddings),
+                                    )
                                 else:
-                                    st.error(f"Unexpected embedding type: {type(embeddings)}")
-                                    logger.error(f"Unexpected embedding type: {type(embeddings)}")
-                                    embeddings = []
-
-                                # Add to database (only if we have valid embeddings)
-                                if isinstance(embeddings, list) and len(embeddings) > 0:
                                     added_count = 0
                                     for i, embedding in enumerate(embeddings):
                                         try:
-                                            # Convert numpy array to list
-                                            embedding_list = embedding.tolist() if hasattr(embedding, 'tolist') else list(embedding)
-                                            
-                                            # Validate embedding
-                                            if not embedding_list or len(embedding_list) == 0:
-                                                logger.warning(f"Empty embedding at index {i}, skipping")
-                                                continue
-                                            
-                                            if db.add_face(
-                                                embedding_list, username, source
-                                            ):
-                                                added_count += 1
-                                                logger.info(f"Successfully added face {i+1}/{len(embeddings)} for {username}")
+                                            if isinstance(embedding, dict):
+                                                bundle = {}
+                                                for key, value in embedding.items():
+                                                    normalized = (
+                                                        _normalize_embedding_value(
+                                                            value
+                                                        )
+                                                    )
+                                                    if normalized is not None:
+                                                        bundle[key] = normalized
                                             else:
-                                                logger.error(f"Failed to add face {i+1}/{len(embeddings)} to database")
+                                                normalized = _normalize_embedding_value(
+                                                    embedding
+                                                )
+                                                if normalized is not None:
+                                                    bundle = {
+                                                        DEFAULT_EMBEDDING_SOURCE: normalized
+                                                    }
+                                                else:
+                                                    bundle = {}
+                                            if not bundle:
+                                                logger.warning(
+                                                    "Empty embedding bundle at index %s, skipping",
+                                                    i,
+                                                )
+                                                continue
+
+                                            if db.add_face(bundle, username, source):
+                                                added_count += 1
+                                                logger.info(
+                                                    "Successfully added face %s/%s for %s",
+                                                    i + 1,
+                                                    len(embeddings),
+                                                    username,
+                                                )
+                                            else:
+                                                logger.error(
+                                                    "Failed to add face %s/%s to database",
+                                                    i + 1,
+                                                    len(embeddings),
+                                                )
                                         except Exception as e:
-                                            logger.error(f"Error adding face {i+1}: {e}", exc_info=True)
+                                            logger.error(
+                                                "Error adding face %s: %s",
+                                                i + 1,
+                                                e,
+                                                exc_info=True,
+                                            )
                                             st.error(f"Error adding face {i+1}: {e}")
 
                                     if added_count > 0:
-                                        st.success(f"✅ Added {added_count} face(s) to database for @{username}")
+                                        st.success(
+                                            f"✅ Added {added_count} face(s) to database for @{username}"
+                                        )
                                     else:
                                         st.error(
                                             "Failed to add any faces to database. "

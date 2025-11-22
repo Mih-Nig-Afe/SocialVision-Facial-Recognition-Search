@@ -45,6 +45,14 @@ class Config:
     DEEPFACE_MODEL = os.getenv("DEEPFACE_MODEL", "Facenet512")
     DEEPFACE_DETECTOR_BACKEND = os.getenv("DEEPFACE_DETECTOR_BACKEND", "opencv")
     FACE_SIMILARITY_THRESHOLD = float(os.getenv("FACE_SIMILARITY_THRESHOLD", "0.35"))
+    ENABLE_DUAL_EMBEDDINGS = (
+        os.getenv("ENABLE_DUAL_EMBEDDINGS", "True").lower() == "true"
+    )
+    EMBEDDING_WEIGHTS = {
+        "deepface": float(os.getenv("DEEPFACE_EMBEDDING_WEIGHT", "0.7")),
+        "dlib": float(os.getenv("DLIB_EMBEDDING_WEIGHT", "0.3")),
+    }
+    DEFAULT_EMBEDDING_SOURCE = os.getenv("DEFAULT_EMBEDDING_SOURCE", "deepface")
 
     # Image processing settings
     MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", "10485760"))  # 10MB

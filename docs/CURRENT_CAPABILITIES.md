@@ -1,350 +1,142 @@
 # SocialVision Current Capabilities
 
-**Quick Reference Guide**  
-**Version:** 1.0.0  
-**Last Updated:** December 2024
+**Version:** 1.2.0  
+**Last Updated:** November 2025  
+**Audience:** Engineers, QA, demo facilitators
 
 ---
 
-## 🎯 What the Current Version Can Do
+## Snapshot
 
-### ✅ Fully Functional Features
-
-#### 1. Face Detection & Recognition
-- **Detect faces** in uploaded images
-- **Extract face embeddings** (512-dimensional using VGGFace2)
-- **Handle multiple faces** in a single image
-- **Compare faces** using similarity metrics
-- **Process images** in batch mode
-
-#### 2. Database Operations
-- **Store face embeddings** in local JSON database
-- **Add faces** with metadata (username, source, timestamps)
-- **Search for similar faces** using vector similarity
-- **Query by username** to find all faces for a user
-- **Get database statistics** (total faces, unique users, sources)
-
-#### 3. Search Functionality
-- **Search by uploaded image** - Upload an image and find similar faces
-- **Search by embedding** - Direct embedding-based search
-- **Configurable similarity threshold** - Adjust match sensitivity
-- **Top-K results** - Get top N most similar matches
-- **Result ranking** - Results sorted by similarity score
-- **User aggregation** - Group results by username with statistics
-
-#### 4. Web Interface (Streamlit)
-- **Search Tab** - Upload image and search for similar faces
-- **Add Faces Tab** - Add new faces to the database
-- **Analytics Tab** - View database statistics and charts
-- **Settings** - Adjust similarity threshold and result count
-- **Real-time updates** - See results immediately
-
-#### 5. Image Processing
-- **Load images** from file or bytes
-- **Support multiple formats** - JPG, PNG, GIF, BMP, WebP
-- **Resize images** while maintaining aspect ratio
-- **Image enhancement** - CLAHE for better face detection
-- **Draw face bounding boxes** for visualization
-- **Image validation** - Check file size and format
-
-#### 6. Testing
-- **Unit tests** for all core components
-- **Test coverage** ~80%
-- **Pytest framework** configured
-- **Test fixtures** for easy testing
+- **Dual Embedding Bundles:** Every detected face stores DeepFace (Facenet512) + dlib encodings, normalized, weighted, and persisted for deterministic scoring.
+- **Search Pathways:** Rank results per face, aggregate matches by username, enrich identities by appending fresh embeddings post-match.
+- **Operational Tooling:** Streamlit tri-tab UI, Docker build with pip cache mount, DeepFace weight prefetch, JSON database auto-versioning.
+- **Quality Baseline:** Pytest suites cover engine/database/search; Streamlit workflows rely on the same API contracts.
 
 ---
 
-## 📋 Feature Matrix
+## Feature Matrix
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Face Detection | ✅ Working | Uses DeepFace (VGGFace2) |
-| Embedding Extraction | ✅ Working | 512-dimensional embeddings |
-| Local Database | ✅ Working | JSON-based storage |
-| Similarity Search | ✅ Working | Euclidean distance |
-| Web UI | ✅ Working | Streamlit interface |
-| Image Upload | ✅ Working | Multiple formats supported |
-| Batch Processing | ✅ Working | Process multiple images |
-| Statistics | ✅ Working | Database analytics |
-| Unit Tests | ✅ Working | Comprehensive test suite |
-| Firebase Integration | ❌ Not Available | Planned for future |
-| Instagram Integration | ❌ Not Available | Planned for future |
-| API Endpoints | ❌ Not Available | Planned for future |
+| Capability | Status | Notes |
+|------------|--------|-------|
+| Face detection | ✅ | DeepFace detector primary; face_recognition fallback. |
+| Embedding extraction | ✅ | Dual embeddings per face; configurable weights. |
+| Local database | ✅ | Stores bundles + primary vectors + metadata. |
+| Similarity search | ✅ | Weighted cosine similarity; profile centroids per username. |
+| Streamlit UI | ✅ | Search / Add / Analytics tabs with live metrics. |
+| Batch processing | ✅ | `FaceRecognitionEngine.batch_process_images` for offline ingestion. |
+| Dockerized runtime | ✅ | BuildKit cache for TensorFlow, DeepFace weight caching, health checks. |
+| Testing | ✅ | `tests/` suites covering engine, DB, search flows. |
+| Firebase integration | 🚧 Planned | Config scaffolding exists; no sync yet. |
+| Instagram ingestion | 🚧 Planned | Manual uploads only today. |
+| API endpoints | 🚧 Planned | Streamlit UI currently drives core features. |
 
 ---
 
-## 🚀 How to Use Current Features
+## Current Workflows
 
-### 1. Search for Similar Faces
+### Search in the UI
 
-```python
-# Using the Streamlit UI
-1. Open the application: streamlit run src/app.py
-2. Go to "🔎 Search" tab
-3. Upload an image with faces
-4. Click "🔍 Search"
-5. View results with usernames and similarity scores
-```
+1. Open **Search** tab → upload photo.
+2. Engine detects faces, generates dual embeddings, and runs weighted similarity search.
+3. Results show per-face matches, usernames, and similarity scores above the configured threshold.
 
-### 2. Add Faces to Database
+### Add Faces
 
-```python
-# Using the Streamlit UI
-1. Go to "📤 Add Faces" tab
-2. Upload an image with faces
-3. Enter Instagram username
-4. Select source type (profile_pic, post, story, reel)
-5. Click "➕ Add to Database"
-```
+1. Open **Add Faces** tab → upload image → provide username + source (profile_pic/post/story/reel).
+2. For each detected face the UI now posts the full embedding bundle to the database.
+3. Database normalizes, stores metadata, and recomputes the username centroid cache.
 
-### 3. View Analytics
+### Programmatic Snippet
 
 ```python
-# Using the Streamlit UI
-1. Go to "📈 Analytics" tab
-2. View total faces count
-3. View unique users count
-4. See source distribution chart
-```
-
-### 4. Programmatic Usage
-
-```python
-from src.database import FaceDatabase
 from src.face_recognition_engine import FaceRecognitionEngine
-from src.search_engine import SearchEngine
-from src.image_utils import ImageProcessor
+from src.database import FaceDatabase
 
-# Initialize components
+engine = FaceRecognitionEngine()
 db = FaceDatabase()
-face_engine = FaceRecognitionEngine()
-search_engine = SearchEngine(db)
 
-# Load and process image
-image = ImageProcessor.load_image("path/to/image.jpg")
-face_locations = face_engine.detect_faces(image)
-embeddings = face_engine.extract_face_embeddings(image, face_locations)
+image, bundles = engine.process_image("samples/group.jpg")
+for bundle in bundles:
+    db.add_face(bundle, username="subject", source="post")
 
-# Add to database
-for embedding in embeddings:
-    db.add_face(embedding.tolist(), "username", "source")
-
-# Search for similar faces
-results = search_engine.search_by_image(image, threshold=0.6, top_k=10)
-print(f"Found {results['total_matches']} matches")
+query = bundles[0]
+matches = db.search_similar_faces(query, threshold=0.35, top_k=5)
 ```
 
 ---
 
-## ⚠️ Known Limitations
+## Limitations & Risks
 
-### 1. Embedding Dimension Mismatch
-- **Issue:** Database expects 128-dimensional embeddings, but engine produces 512-dimensional
-- **Impact:** May cause issues with similarity calculations
-- **Workaround:** Currently works but may need adjustment
-- **Status:** Needs fixing
-
-### 2. No Cloud Storage
-- **Issue:** Only local JSON database, no cloud backup
-- **Impact:** Data stored locally only
-- **Workaround:** Manual backup of `data/faces_database.json`
-- **Status:** Firebase integration planned
-
-### 3. No Instagram Integration
-- **Issue:** Manual face addition only
-- **Impact:** Cannot automatically collect Instagram data
-- **Workaround:** Manual upload and addition
-- **Status:** Instagram API integration planned
-
-### 4. Limited Error Handling
-- **Issue:** Some edge cases not fully handled
-- **Impact:** May show generic errors
-- **Workaround:** Check logs for details
-- **Status:** Being improved
-
-### 5. Performance at Scale
-- **Issue:** No vector indexing for large datasets
-- **Impact:** Search may be slow with many faces
-- **Workaround:** Works well for <10,000 faces
-- **Status:** Optimization planned
+| Area | Details | Mitigation |
+|------|---------|------------|
+| Data store | JSON file scales linearly; no vector index. | Keep dataset <10k faces or migrate to vector DB (planned). |
+| Cloud sync | Firebase hooks not wired, so no remote backup. | Manual copy of `data/faces_database.json`; Firebase work tracked in roadmap. |
+| Automation | Instagram ingestion and API endpoints not implemented. | Streamlit UI/manual uploads only for now. |
+| GPU utilization | Pipelines run on CPU by default; containers assume CPU. | Evaluate GPU-enabled base image when moving beyond research demos. |
 
 ---
 
-## 📊 Performance Characteristics
+## Performance Notes (CPU reference laptop)
 
-### Current Performance
+| Operation | Typical Time |
+|-----------|--------------|
+| Face detection (per image) | 1–3 s |
+| Dual embedding extraction (per face) | 3–5 s |
+| DB similarity search (<1k faces) | <0.5 s |
+| Streamlit search request | <6 s end-to-end |
 
-| Operation | Typical Time | Notes |
-|-----------|--------------|-------|
-| Face Detection | 1-3 seconds | Per image |
-| Embedding Extraction | 2-5 seconds | Per face |
-| Database Search | <1 second | For <1000 faces |
-| Image Upload | <1 second | Depends on size |
-| Batch Processing | ~5-10 sec/image | Multiple images |
-
-### Scalability
-
-- **Recommended:** <10,000 faces in database
-- **Maximum tested:** 1,000 faces
-- **Search performance:** Linear with database size
-- **Memory usage:** ~100MB base + ~1KB per face
+Search scales roughly linearly with stored faces because no ANN index is used yet.
 
 ---
 
-## 🧪 Testing Capabilities
+## Testing
 
-### What You Can Test
+Automated coverage:
 
-1. **Face Detection**
-   - Test with various image types
-   - Test with multiple faces
-   - Test edge cases (no faces, small faces)
+- `tests/test_face_recognition.py` – detection + bundling edge cases.
+- `tests/test_database.py` – bundle storage, weighted search, metadata caches.
+- `tests/test_search_engine.py` – enrichment flows, grouping helpers.
 
-2. **Database Operations**
-   - Add faces
-   - Search functionality
-   - Statistics generation
-   - Data persistence
-
-3. **Search Accuracy**
-   - Similarity threshold tuning
-   - Result ranking
-   - User aggregation
-
-4. **UI Functionality**
-   - Image upload
-   - Search interface
-   - Analytics display
-   - Error handling
-
-### Running Tests
+Commands:
 
 ```bash
-# Run all tests
 pytest tests/ -v
-
-# Run specific test file
-pytest tests/test_database.py -v
-
-# With coverage
-pytest tests/ --cov=src --cov-report=html
+pytest tests/test_database.py -vv
 ```
 
----
+Manual smoke tests:
 
-## 🔧 Configuration Options
-
-### Adjustable Settings
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Similarity Threshold | 0.6 | Lower = more matches |
-| Top K Results | 50 | Number of results to return |
-| Face Match Threshold | 0.6 | Face comparison threshold |
-| Max Image Size | 10MB | Maximum upload size |
-| Log Level | INFO | Logging verbosity |
-
-### Configuration Files
-
-- `src/config.py` - Main configuration
-- `.env` - Environment variables (optional)
-- `pytest.ini` - Test configuration
+1. Run Streamlit, add a face, confirm database entry includes both `deepface` and `dlib` vectors.
+2. Search for that face; check similarity score ≥ threshold and enrichment summary.
+3. Rebuild Docker image with `DOCKER_BUILDKIT=1 docker compose build` to verify pip caching stage.
 
 ---
 
-## 📝 Example Use Cases
+## Configuration Highlights
 
-### Use Case 1: Find Similar Faces
-**Goal:** Find all faces similar to a given image
+- `ENABLE_DUAL_EMBEDDINGS=true` keeps DeepFace + dlib active simultaneously.
+- `DEEPFACE_EMBEDDING_WEIGHT` / `DLIB_EMBEDDING_WEIGHT` tune how similarity scores blend.
+- `LOCAL_DB_PATH` switches JSON storage (default `data/faces_database.json`).
+- `FACE_SIMILARITY_THRESHOLD` globally affects Search + Enrichment.
 
-**Steps:**
-1. Upload query image
-2. System detects faces
-3. Extracts embeddings
-4. Searches database
-5. Returns ranked results
-
-### Use Case 2: Build Face Database
-**Goal:** Add multiple faces to database
-
-**Steps:**
-1. Upload images with faces
-2. Enter usernames
-3. Select sources
-4. System processes and stores
-5. Faces available for search
-
-### Use Case 3: User Analytics
-**Goal:** Analyze database contents
-
-**Steps:**
-1. View analytics tab
-2. Check total faces
-3. View user distribution
-4. See source breakdown
-5. Monitor database growth
+See `src/config.py` for the full catalog.
 
 ---
 
-## 🎓 Learning Outcomes
+## Related Docs
 
-### Skills Demonstrated
-
-- ✅ Python web development (Streamlit)
-- ✅ Computer vision (OpenCV, DeepFace)
-- ✅ Machine learning (face embeddings)
-- ✅ Database design (local JSON)
-- ✅ Software testing (pytest)
-- ✅ Project organization
-
-### Technologies Used
-
-- Streamlit (Web UI)
-- DeepFace (Face Recognition)
-- NumPy (Numerical Computing)
-- JSON (Data Storage)
-- Pytest (Testing)
-- OpenCV/PIL (Image Processing)
+- **[PROJECT_STATUS.md](PROJECT_STATUS.md)** – macro progress + open work.
+- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** – step-by-step QA plans.
+- **[DEMONSTRATION_GUIDE.md](DEMONSTRATION_GUIDE.md)** – narrative for live walkthroughs.
 
 ---
 
-## 📚 Related Documentation
+## Support
 
-- **[PROJECT_STATUS.md](PROJECT_STATUS.md)** - Detailed project status
-- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - How to test features
-- **[DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md)** - Future plans
+Questions go to Mihretab N. Afework · <mtabdevt@gmail.com>.
 
 ---
 
-## 🆘 Getting Help
-
-### Common Questions
-
-**Q: How do I add faces to the database?**  
-A: Use the "Add Faces" tab in the Streamlit UI, or use the programmatic API.
-
-**Q: Why are no results found?**  
-A: Check that faces exist in database, and try lowering the similarity threshold.
-
-**Q: How accurate is the face recognition?**  
-A: Uses VGGFace2 model, typically 95%+ accuracy for clear front-facing faces.
-
-**Q: Can I use my own images?**  
-A: Yes, the system accepts JPG, PNG, GIF, BMP, and WebP formats.
-
-**Q: Where is the data stored?**  
-A: Local JSON file at `data/faces_database.json`
-
----
-
-## 📞 Support
-
-**Developer:** Mihretab N. Afework  
-**Email:** mtabdevt@gmail.com  
-**GitHub:** [@Mih-Nig-Afe](https://github.com/Mih-Nig-Afe)
-
----
-
-*Last Updated: December 2024*
+Last updated: November 2025
 

@@ -1,218 +1,214 @@
 # SocialVision: Advanced Facial Recognition Search Engine
 
-**Advanced Facial Recognition Search Engine for Instagram Content Analysis**
-
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.39+-red.svg)](https://streamlit.io)
-[![TensorFlow](https://img.shields.io/badge/TensorFlow-2.18+-orange.svg)](https://tensorflow.org)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.5+-red.svg)](https://pytorch.org)
-[![OpenCV](https://img.shields.io/badge/OpenCV-4.10+-green.svg)](https://opencv.org)
-[![Firebase](https://img.shields.io/badge/Firebase-10.0+-orange.svg)](https://firebase.google.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![DeepFace](https://img.shields.io/badge/DeepFace-Facenet512-purple.svg)](https://github.com/serengil/deepface)
+[![face_recognition](https://img.shields.io/badge/dlib-face_recognition-green.svg)](https://github.com/ageitgey/face_recognition)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ed.svg)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## 🎯 Project Overview
+SocialVision is an academic research project that builds an end‑to‑end facial recognition search engine for Instagram-style content. The stack combines **DeepFace (TensorFlow/Keras)** embeddings with **dlib/face_recognition** encodings, fuses both vectors per face, and exposes the experience through a Streamlit UI, local JSON database, and automated tests that keep the pipeline reproducible.
 
-SocialVision is an advanced facial recognition search engine designed for Instagram content analysis. This academic research project demonstrates the practical application of computer vision, machine learning, and cloud computing technologies using exclusively free resources.
-
-**Developer:** Mihretab N. Afework  
-**GitHub:** [@Mih-Nig-Afe](https://github.com/Mih-Nig-Afe)  
-**Email:** <mtabdevt@gmail.com>  
-
-## 🚀 Key Features
-
-- **Advanced Facial Recognition** using Python's face_recognition library
-- **Real-time Search Engine** with Streamlit web interface
-- **Cloud-based Storage** using Firebase Firestore
-- **Zero-Budget Implementation** using only free resources
-- **Ethical AI Development** with privacy-first approach
-- **Academic Research Focus** with comprehensive documentation
-
-## 🛠️ Technology Stack
-
-| Component | Technology | Version | Purpose |
-|-----------|------------|---------|---------|
-| **Frontend** | Streamlit | 1.39+ | Web application framework |
-| **Alternative UI** | Gradio | 4.44+ | ML-focused web interface |
-| **Backend** | FastAPI/Flask | 0.115+/3.1+ | API development |
-| **Database** | Firebase Firestore | 2.19+ | NoSQL document database |
-| **ML/AI** | OpenCV + face_recognition | 4.10+/1.3+ | Computer vision and facial recognition |
-| **Deep Learning** | TensorFlow/PyTorch | 2.18+/2.5+ | Neural networks and ML models |
-| **Data Processing** | NumPy + Pandas | 2.1+/2.2+ | Numerical computing and data analysis |
-| **Cloud Storage** | Firebase Storage | 2.18+ | Image and media storage |
-| **Image Processing** | Pillow + scikit-image | 11.0+/0.24+ | Advanced image manipulation |
-
-## 📋 Project Structure
-
-```text
-SocialVision-Facial-Recognition-Search/
-├── docs/                          # Documentation directory
-│   ├── README.md                  # Documentation index
-│   ├── PROJECT_STATUS.md          # Current project status and capabilities
-│   ├── TESTING_GUIDE.md           # Comprehensive testing guide
-│   ├── DEVELOPMENT_ROADMAP.md     # Development plan and roadmap
-│   └── SocialVision_Technical_Proposal.md  # Technical proposal
-├── src/                           # Source code
-│   ├── app.py                     # Main Streamlit application
-│   ├── face_recognition_engine.py # Face recognition engine
-│   ├── database.py                # Local JSON database
-│   ├── search_engine.py           # Search engine
-│   ├── image_utils.py             # Image processing utilities
-│   ├── config.py                  # Configuration management
-│   └── logger.py                  # Logging setup
-├── tests/                         # Test suite
-│   ├── test_face_recognition.py   # Face recognition tests
-│   ├── test_database.py           # Database tests
-│   └── test_search_engine.py      # Search engine tests
-├── data/                          # Data directory (database, etc.)
-├── config/                        # Configuration files
-├── logs/                          # Log files
-├── uploads/                       # Uploaded images
-├── models/                        # ML models directory
-├── requirements.txt               # Python dependencies
-├── pytest.ini                    # Pytest configuration
-├── Dockerfile                     # Docker configuration
-├── docker-compose.yml             # Docker Compose config
-├── LICENSE                        # MIT License
-└── README.md                      # This file
-```
-
-## 🎓 Academic Objectives
-
-- **Technical Mastery:** Advanced Python development with ML/AI libraries
-- **Research Contribution:** Novel approach to social media content analysis
-- **Ethical AI:** Responsible development practices and privacy considerations
-- **Open Source:** Community contribution and knowledge sharing
-
-## 📖 Documentation
-
-Comprehensive documentation is available in the [`docs/`](docs/) directory:
-
-- **[📊 Project Status](docs/PROJECT_STATUS.md)** - Current project status, completed features, and capabilities
-- **[🧪 Testing Guide](docs/TESTING_GUIDE.md)** - How to test the current version and capabilities
-- **[🗺️ Development Roadmap](docs/DEVELOPMENT_ROADMAP.md)** - Development plan, phases, and future goals
-- **[📋 Technical Proposal](docs/SocialVision_Technical_Proposal.md)** - Comprehensive technical proposal and architecture
-- **[📚 Documentation Index](docs/README.md)** - Complete documentation index
-
-### Quick Links
-
-- **Current Status:** 60% Complete - See [PROJECT_STATUS.md](docs/PROJECT_STATUS.md)
-- **How to Test:** See [TESTING_GUIDE.md](docs/TESTING_GUIDE.md)
-- **What's Next:** See [DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md)
-
-## 🔧 Quick Start
-
-### Prerequisites
-
-- Python 3.9 or higher
-- pip package manager
-- Git
-
-### Installation Steps
-
-1. **Clone the repository**
-
-   ```bash
-   git clone https://github.com/Mih-Nig-Afe/SocialVision-Facial-Recognition-Search.git
-   cd SocialVision-Facial-Recognition-Search
-   ```
-
-2. **Create virtual environment (recommended)**
-
-   ```bash
-   python -m venv venv
-   # On Windows
-   venv\Scripts\activate
-   # On macOS/Linux
-   source venv/bin/activate
-   ```
-
-3. **Install dependencies**
-
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-4. **Configure Firebase**
-
-   ```bash
-   # Add your Firebase configuration
-   cp config/firebase_config_template.json config/firebase_config.json
-   ```
-
-5. **Run the application**
-
-   **Option A: Using Docker (Recommended)**
-   ```bash
-   # Build and start with Docker
-   docker-compose build
-   docker-compose up -d
-   
-   # Or use the quick demo script
-   ./docker-demo.sh
-   
-   # Access at http://localhost:8501
-   ```
-
-   **Option B: Local Installation**
-   ```bash
-   streamlit run src/app.py
-   ```
-
-   **For detailed Docker instructions, see [DOCKER_TESTING_GUIDE.md](docs/DOCKER_TESTING_GUIDE.md)**
-
-### System Requirements
-
-- **RAM**: Minimum 4GB (8GB recommended for ML operations)
-- **Storage**: 2GB free space
-- **Internet**: Required for Firebase and model downloads
-
-## 📊 Project Status
-
-**Current Development Level:** 60% Complete  
-**Current Phase:** Phase 4 (User Interface Development) - In Progress
-
-### Completed Phases ✅
-- **Phase 1:** Foundation and Setup (100%)
-- **Phase 3:** Search Engine Development (100%)
-
-### In Progress ⚠️
-- **Phase 2:** Data Collection and Processing (50%)
-- **Phase 4:** User Interface Development (90%)
-- **Phase 5:** Testing and Optimization (40%)
-
-### Key Features Completed
-- ✅ Face detection and embedding extraction
-- ✅ Local JSON database system
-- ✅ Similarity search engine
-- ✅ Streamlit web interface
-- ✅ Image processing utilities
-- ✅ Unit test suite
-
-For detailed status, see [PROJECT_STATUS.md](docs/PROJECT_STATUS.md)
-
-## 🤝 Contributing
-
-This is an academic research project. Contributions, suggestions, and feedback are welcome!
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 📞 Contact
-
-### Mihretab N. Afework
-
-- **GitHub**: [@Mih-Nig-Afe](https://github.com/Mih-Nig-Afe)
-- **Email**: <mtabdevt@gmail.com>
-- **Project**: [SocialVision-Facial-Recognition-Search](https://github.com/Mih-Nig-Afe/SocialVision-Facial-Recognition-Search)
-- **LinkedIn**: [Connect for collaboration](https://linkedin.com/in/mihretab-afework)
+> **Maintainer**: Mihretab N. Afework ([@Mih-Nig-Afe](https://github.com/Mih-Nig-Afe)) · <mtabdevt@gmail.com>
 
 ---
 
-*This project is developed for academic and research purposes, demonstrating ethical AI development practices and responsible use of facial recognition technology.*
+## Contents
+
+1. [Capabilities](#capabilities)
+2. [Architecture](#architecture)
+3. [Getting Started](#getting-started)
+4. [Usage](#usage)
+5. [Configuration](#configuration)
+6. [Documentation Map](#documentation-map)
+7. [Testing](#testing)
+8. [Roadmap & Contributing](#roadmap--contributing)
+
+---
+
+## Capabilities
+
+| Area | Highlights |
+|------|------------|
+| **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, automatic fallbacks if TensorFlow is unavailable. |
+| **Face Search Engine** | Detection, embedding, cosine similarity search, identity aggregation, configurable thresholds, enrichment workflows that continuously learn from matches. |
+| **Streamlit Command Center** | Tabs for Search, Add Faces, Analytics; live metrics, threshold sliders, and enrichment summaries meant for operator demos. |
+| **Data Layer** | Versioned JSON database, per-face metadata, cached profile centroids per username, normalized bundles for deterministic math. |
+| **Operations** | Docker image with BuildKit pip caching (no repeated TensorFlow wheel downloads), DeepFace weight prefetch, CLI demo script, logging + health checks. |
+| **Quality & Docs** | Pytest coverage for engine/database/search, reproducible fixtures, comprehensive docs mirroring professional OSS projects. |
+
+---
+
+## Architecture
+
+```text
+        +---------------------------+
+        |        Streamlit UI       |
+        |  Search / Add / Analytics |
+        +-------------+-------------+
+                      |
+                      v
+        +-------------+-------------+
+        |     SearchEngine API      |
+        | - Enrichment workflows    |
+        | - Threshold controls      |
+        +------+------+-------------+
+               |      |
+     +---------+      +---------+
+     v                          v
+FaceRecognitionEngine     FaceDatabase
+(DeepFace + dlib)         (JSON + metadata cache)
+     |                          |
+     v                          v
+ DeepFace cache        data/faces_database.json
+ dlib (face_recognition)
+```
+
+- **Detection/Embedding**: `FaceRecognitionEngine` first attempts DeepFace (Facenet512) and, based on config, also runs dlib encoders. Embeddings are normalized, bundled, and tagged per backend (`{"deepface": [...], "dlib": [...]}`).
+- **Storage/Search**: `FaceDatabase` stores both the bundle and a primary embedding for backward compatibility, computes weighted cosine similarities, and maintains username centroids for quick identity queries.
+- **Presentation / Ops**: Streamlit orchestrates searches and enrichment, while Docker provides an isolated runtime with cached pip layers and pre-fetched DeepFace weights.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.9+
+- pip
+- Git
+- (Optional) Docker 24+ with BuildKit enabled
+
+### Local Setup
+
+```bash
+git clone https://github.com/Mih-Nig-Afe/SocialVision-Facial-Recognition-Search.git
+cd SocialVision-Facial-Recognition-Search
+python -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Launch Streamlit:
+
+```bash
+streamlit run src/app.py
+```
+
+### Docker Workflow (recommended for demos)
+
+```bash
+export DOCKER_BUILDKIT=1
+docker compose build
+docker compose up -d
+# or
+./docker-demo.sh
+```
+
+Features of the container image:
+
+- BuildKit cache mount for pip (`/root/.cache/pip`) so large wheels (TensorFlow, DeepFace) download once.
+- Pre-fetch of DeepFace weights during build, reducing cold-start latency.
+- Health check hitting `/_stcore/health` to signal readiness.
+
+Access the UI at `http://localhost:8501`.
+
+---
+
+## Usage
+
+### Streamlit Tabs
+
+1. **🔍 Search** – Upload an image, system detects faces, extracts dual embeddings, and surfaces matches with similarity scores.
+2. **📤 Add Faces** – Upload faces for specific usernames; the UI now uploads full embedding bundles so the database can blend DeepFace+dlib vectors.
+3. **📈 Analytics** – Watch total faces, unique users, and per-source charts sourced directly from the JSON database.
+
+### Programmatic Example
+
+```python
+from src.database import FaceDatabase
+from src.face_recognition_engine import FaceRecognitionEngine
+
+db = FaceDatabase()
+engine = FaceRecognitionEngine()
+
+image, bundles = engine.process_image("path/to/photo.jpg")
+for bundle in bundles:
+    db.add_face(bundle, username="research_subject", source="post")
+
+query_results = db.search_similar_faces(bundle, threshold=0.35, top_k=5)
+```
+
+---
+
+## Configuration
+
+Key environment variables (see `src/config.py` for defaults):
+
+| Variable | Description |
+|----------|-------------|
+| `DEEPFACE_MODEL` | DeepFace backbone (default `Facenet512`). |
+| `DEEPFACE_DETECTOR_BACKEND` | Detector backend (default `opencv`). |
+| `ENABLE_DUAL_EMBEDDINGS` | `true` to run DeepFace + dlib together (default `true`). |
+| `DEEPFACE_EMBEDDING_WEIGHT` / `DLIB_EMBEDDING_WEIGHT` | Similarity weights applied during search. |
+| `FACE_SIMILARITY_THRESHOLD` | Global cosine similarity cut-off. |
+| `LOCAL_DB_PATH` | Path to JSON database (default `data/faces_database.json`). |
+
+Add optional secrets (Firebase, etc.) via `.env` or environment-specific config classes.
+
+---
+
+## Documentation Map
+
+- **[docs/README.md](docs/README.md)** – navigation hub.
+- **[docs/CURRENT_CAPABILITIES.md](docs/CURRENT_CAPABILITIES.md)** – quick reference for what works today.
+- **[docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** – phase progress, KPIs, and blocking issues.
+- **[docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md)** – manual + automated test instructions.
+- **[docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md)** – upcoming milestones.
+- **[docs/DOCKER_TESTING_GUIDE.md](docs/DOCKER_TESTING_GUIDE.md)** – container-focused workflows.
+
+---
+
+## Testing
+
+```bash
+pytest tests/ -v
+
+# Focused runs
+pytest tests/test_face_recognition.py -v
+pytest tests/test_database.py -v
+pytest tests/test_search_engine.py -v
+```
+
+All three suites are CI-friendly and cover the dual-embedding engine, bundle-aware database, and enrichment logic.
+
+---
+
+## Roadmap & Contributing
+
+**Current focus:**
+
+- Expanding dataset ingestion (Instagram automation, Firebase sync)
+- Hardening API surface (FastAPI service layer)
+- Enhancing scalability (vector index, embeddings rebalancing)
+
+Contributions are welcome:
+
+1. Fork the repo.
+2. Create a feature branch.
+3. Add/modify code + docs + tests.
+4. Open a pull request describing the change and verification steps.
+
+Please review the [Development Roadmap](docs/DEVELOPMENT_ROADMAP.md) and [Testing Guide](docs/TESTING_GUIDE.md) before submitting changes.
+
+---
+
+## Contact
+
+- Email: <mtabdevt@gmail.com>
+- GitHub: [@Mih-Nig-Afe](https://github.com/Mih-Nig-Afe)
+- LinkedIn: [Mihretab N. Afework](https://linkedin.com/in/mihretab-afework)
+
+---
+
+*SocialVision is built for academic and ethical research demonstrations. Use responsibly and respect privacy regulations in your jurisdiction.*

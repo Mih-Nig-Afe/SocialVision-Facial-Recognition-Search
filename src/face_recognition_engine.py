@@ -10,6 +10,9 @@ from src.config import get_config
 
 logger = setup_logger(__name__)
 config = get_config()
+ENABLE_DUAL_EMBEDDINGS = getattr(config, "ENABLE_DUAL_EMBEDDINGS", True)
+DEFAULT_EMBEDDING_SOURCE = getattr(config, "DEFAULT_EMBEDDING_SOURCE", "deepface")
+EmbeddingBundle = Dict[str, np.ndarray]
 
 # Supported DeepFace models / detector backends (per upstream docs)
 SUPPORTED_DEEPFACE_MODELS = {
@@ -424,9 +427,50 @@ class FaceRecognitionEngine:
             )
             return np.array([])
 
+    def _bundle_embeddings(
+        self,
+        face_locations: List[Tuple[int, int, int, int]],
+        deepface_embeddings: np.ndarray,
+        dlib_embeddings: np.ndarray,
+    ) -> List[EmbeddingBundle]:
+        """Align embeddings with detected faces so downstream consumers stay in sync."""
+        face_count = len(face_locations)
+        if face_count == 0:
+            face_count = max(len(deepface_embeddings), len(dlib_embeddings))
+
+        if face_count == 0:
+            return []
+
+        if len(deepface_embeddings) > face_count:
+            logger.warning(
+                "DeepFace produced %s embeddings but only %s face detections; truncating",
+                len(deepface_embeddings),
+                face_count,
+            )
+            deepface_embeddings = deepface_embeddings[:face_count]
+
+        if len(dlib_embeddings) > face_count:
+            logger.warning(
+                "dlib produced %s embeddings but only %s face detections; truncating",
+                len(dlib_embeddings),
+                face_count,
+            )
+            dlib_embeddings = dlib_embeddings[:face_count]
+
+        bundles: List[EmbeddingBundle] = []
+        for idx in range(face_count):
+            bundle: EmbeddingBundle = {}
+            if deepface_embeddings.size and idx < len(deepface_embeddings):
+                bundle["deepface"] = deepface_embeddings[idx]
+            if dlib_embeddings.size and idx < len(dlib_embeddings):
+                bundle["dlib"] = dlib_embeddings[idx]
+            bundles.append(bundle)
+
+        return bundles
+
     def extract_face_embeddings(
         self, image: np.ndarray, face_locations: List[Tuple[int, int, int, int]]
-    ) -> np.ndarray:
+    ) -> List[EmbeddingBundle]:
         """
         Extract face embeddings using DeepFace (optimized for performance)
 
@@ -435,46 +479,66 @@ class FaceRecognitionEngine:
             face_locations: List of face locations (not used with deepface, but can be used for optimization)
 
         Returns:
-            Array of face embeddings (N x embedding_dim for selected model)
+            List of embedding bundles (each bundle may contain deepface/dlib vectors)
         """
-        if not HAS_DEEPFACE:
-            return self._extract_embeddings_with_face_recognition(image, face_locations)
+        deepface_embeddings = np.array([])
+        dlib_embeddings = np.array([])
+        deepface_failed = False
 
-        try:
-            logger.info("Extracting face embeddings with DeepFace...")
-            # Convert BGR to RGB
-            if HAS_CV2:
-                rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            else:
-                # Manual BGR to RGB conversion
-                rgb_image = image[:, :, ::-1]
+        if HAS_DEEPFACE:
+            try:
+                logger.info("Extracting face embeddings with DeepFace...")
+                if HAS_CV2:
+                    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                else:
+                    rgb_image = image[:, :, ::-1]
 
-            # Use represent() which is more efficient - it detects faces and extracts embeddings in one call
-            # This is faster than calling extract_faces() and then represent() separately
-            embedding_objs = DeepFace.represent(
-                rgb_image,
-                enforce_detection=False,
-                model_name=DEEPFACE_MODEL_NAME,
-                detector_backend=DEEPFACE_DETECTOR_BACKEND,
-                align=True,
+                embedding_objs = DeepFace.represent(
+                    rgb_image,
+                    enforce_detection=False,
+                    model_name=DEEPFACE_MODEL_NAME,
+                    detector_backend=DEEPFACE_DETECTOR_BACKEND,
+                    align=True,
+                )
+
+                embeddings_list = []
+                for obj in embedding_objs:
+                    if isinstance(obj, dict) and "embedding" in obj:
+                        embeddings_list.append(obj["embedding"])
+
+                deepface_embeddings = (
+                    np.array(embeddings_list) if embeddings_list else np.array([])
+                )
+                logger.info(
+                    "Extracted %s face embeddings via DeepFace",
+                    len(deepface_embeddings),
+                )
+            except Exception as e:
+                logger.error(
+                    "Error extracting embeddings via DeepFace: %s", e, exc_info=True
+                )
+                deepface_embeddings = np.array([])
+                deepface_failed = True
+
+        should_use_dlib = (
+            (not HAS_DEEPFACE) or ENABLE_DUAL_EMBEDDINGS or deepface_failed
+        )
+        if not should_use_dlib and deepface_embeddings.size == 0:
+            should_use_dlib = True
+
+        if should_use_dlib:
+            fallback_embeddings = self._extract_embeddings_with_face_recognition(
+                image, face_locations
             )
+            dlib_embeddings = fallback_embeddings
 
-            if not embedding_objs:
-                logger.warning("No embeddings extracted from image")
-                return np.array([])
+        if deepface_embeddings.size == 0 and dlib_embeddings.size == 0:
+            logger.warning("No embeddings extracted from available backends")
+            return []
 
-            # Extract embeddings from the results
-            embeddings_list = []
-            for obj in embedding_objs:
-                if isinstance(obj, dict) and "embedding" in obj:
-                    embeddings_list.append(obj["embedding"])
-
-            logger.info(f"Extracted {len(embeddings_list)} face embeddings")
-            return np.array(embeddings_list) if embeddings_list else np.array([])
-
-        except Exception as e:
-            logger.error(f"Error extracting embeddings: {e}", exc_info=True)
-            return self._extract_embeddings_with_face_recognition(image, face_locations)
+        return self._bundle_embeddings(
+            face_locations, deepface_embeddings, dlib_embeddings
+        )
 
     def compare_faces(
         self,
@@ -533,7 +597,9 @@ class FaceRecognitionEngine:
             logger.error(f"Error calculating face distance: {e}")
             return np.array([])
 
-    def process_image(self, image_path: str) -> Tuple[np.ndarray, List[np.ndarray]]:
+    def process_image(
+        self, image_path: str
+    ) -> Tuple[np.ndarray, List[Dict[str, List[float]]]]:
         """
         Process image and extract all face embeddings
 
@@ -560,9 +626,16 @@ class FaceRecognitionEngine:
                 return image, []
 
             # Extract embeddings
-            embeddings = self.extract_face_embeddings(image, face_locations)
+            embedding_bundles = self.extract_face_embeddings(image, face_locations)
+            serialized: List[Dict[str, List[float]]] = []
+            for bundle in embedding_bundles:
+                payload: Dict[str, List[float]] = {}
+                for key, value in bundle.items():
+                    if hasattr(value, "tolist"):
+                        payload[key] = value.tolist()
+                serialized.append(payload)
 
-            return image, embeddings.tolist()
+            return image, serialized
 
         except Exception as e:
             logger.error(f"Error processing image {image_path}: {e}")
@@ -570,7 +643,7 @@ class FaceRecognitionEngine:
 
     def batch_process_images(
         self, image_paths: List[str]
-    ) -> Dict[str, List[np.ndarray]]:
+    ) -> Dict[str, List[Dict[str, List[float]]]]:
         """
         Process multiple images
 

@@ -45,7 +45,7 @@ def test_detect_faces_empty_image(face_engine, sample_image):
 def test_extract_embeddings_empty(face_engine, sample_image):
     """Test embedding extraction with no faces"""
     embeddings = face_engine.extract_face_embeddings(sample_image, [])
-    assert isinstance(embeddings, np.ndarray)
+    assert isinstance(embeddings, list)
     assert len(embeddings) == 0
 
 
