@@ -2,11 +2,15 @@
 Core facial recognition engine using deepface library
 """
 
+import time
 import numpy as np
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
+from typing import Any, List, Tuple, Dict, Optional, TYPE_CHECKING, Union
 from src.logger import setup_logger
 from src.config import get_config
+
+if TYPE_CHECKING:  # pragma: no cover - typing helper
+    from src.database import FaceDatabase
 
 logger = setup_logger(__name__)
 config = get_config()
@@ -152,15 +156,21 @@ except ImportError:
 class FaceRecognitionEngine:
     """Main facial recognition engine"""
 
-    def __init__(self, model: str = "hog"):
-        """
-        Initialize face recognition engine
+    def __init__(
+        self,
+        model: str = "hog",
+        database: Optional["FaceDatabase"] = None,
+    ):
+        """Initialize engine and optionally bind a database."""
 
-        Args:
-            model: "hog" (faster) or "cnn" (more accurate)
-        """
         self.model = model
+        self.database = database
         logger.info(f"Initialized FaceRecognitionEngine with model: {model}")
+
+    def attach_database(self, database: "FaceDatabase") -> None:
+        """Attach or replace the database used for persistence."""
+
+        self.database = database
 
     def detect_faces(self, image: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """
@@ -280,6 +290,36 @@ class FaceRecognitionEngine:
                 logger.info("Falling back to OpenCV face detection")
                 return self._detect_faces_opencv(image)
             return []
+
+    def detect_face(self, image: np.ndarray) -> Optional[np.ndarray]:
+        """Return the first detected face chip for quick previews."""
+
+        locations = self.detect_faces(image)
+        if not locations:
+            return None
+        chips = self.extract_face_chips(image, [locations[0]])
+        return chips[0] if chips else None
+
+    def extract_face_chips(
+        self, image: np.ndarray, face_locations: List[Tuple[int, int, int, int]]
+    ) -> List[np.ndarray]:
+        """Slice face regions from the image for visualization."""
+
+        chips: List[np.ndarray] = []
+        if image is None or not face_locations:
+            return chips
+
+        height, width = image.shape[:2]
+        for top, right, bottom, left in face_locations:
+            top = max(0, int(top))
+            left = max(0, int(left))
+            bottom = min(height, int(bottom))
+            right = min(width, int(right))
+            if bottom - top <= 0 or right - left <= 0:
+                continue
+            chips.append(image[top:bottom, left:right].copy())
+
+        return chips
 
     def _detect_faces_opencv(
         self, image: np.ndarray
@@ -468,6 +508,27 @@ class FaceRecognitionEngine:
 
         return bundles
 
+    @staticmethod
+    def _serialize_embedding_bundle(bundle: EmbeddingBundle) -> Dict[str, List[float]]:
+        """Convert numpy-backed embedding bundle into primitive lists."""
+
+        serialized: Dict[str, List[float]] = {}
+        if not bundle:
+            return serialized
+
+        for key, value in bundle.items():
+            if value is None:
+                continue
+            if hasattr(value, "tolist"):
+                vector = value.tolist()
+            else:
+                vector = list(value)
+            if not vector:
+                continue
+            serialized[key] = vector
+
+        return serialized
+
     def extract_face_embeddings(
         self, image: np.ndarray, face_locations: List[Tuple[int, int, int, int]]
     ) -> List[EmbeddingBundle]:
@@ -596,6 +657,150 @@ class FaceRecognitionEngine:
         except Exception as e:
             logger.error(f"Error calculating face distance: {e}")
             return np.array([])
+
+    def add_face_to_db(
+        self,
+        username: str,
+        embedding: Dict[str, List[float]],
+        source: str = "profile_pic",
+        retries: int = 3,
+        delay: float = 1.0,
+        db: Optional["FaceDatabase"] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        image_url: Optional[str] = None,
+    ) -> bool:
+        """Persist an embedding bundle with retry support."""
+
+        target_db = db or self.database
+        if target_db is None:
+            logger.error("No FaceDatabase instance available for persistence")
+            return False
+
+        last_error: Optional[Exception] = None
+        for attempt in range(1, retries + 1):
+            try:
+                success = target_db.add_or_update_face(
+                    embedding=embedding,
+                    username=username,
+                    source=source,
+                    image_url=image_url,
+                    metadata=metadata,
+                )
+                if success:
+                    logger.info(
+                        "Face for %s stored successfully on attempt %s",
+                        username,
+                        attempt,
+                    )
+                    return True
+            except Exception as exc:  # pragma: no cover - network dependent
+                last_error = exc
+                logger.warning(
+                    "Attempt %s/%s to persist face for %s failed: %s",
+                    attempt,
+                    retries,
+                    username,
+                    exc,
+                )
+
+            if attempt < retries:
+                time.sleep(delay)
+
+        if last_error:
+            logger.error(
+                "Exhausted retries persisting face for %s: %s",
+                username,
+                last_error,
+            )
+        return False
+
+    def process_and_add_face(
+        self,
+        username: str,
+        image_path: Optional[str] = None,
+        image: Optional[np.ndarray] = None,
+        source: str = "profile_pic",
+        retries: int = 3,
+        delay: float = 1.0,
+        db: Optional["FaceDatabase"] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        return_summary: bool = False,
+    ) -> Union[bool, Dict[str, Any]]:
+        """Complete workflow: load image, extract embeddings, persist them."""
+
+        summary = {
+            "faces_detected": 0,
+            "embeddings_extracted": 0,
+            "faces_added": 0,
+            "errors": [],
+        }
+        summary["success"] = False
+
+        target_db = db or self.database
+        if target_db is None:
+            summary["errors"].append("No database instance provided")
+            logger.error("process_and_add_face requires a FaceDatabase instance")
+            return summary if return_summary else False
+
+        working_image = image
+        if working_image is None:
+            if not image_path:
+                summary["errors"].append("image or image_path required")
+                return summary if return_summary else False
+
+            try:
+                from src.image_utils import ImageProcessor
+
+                working_image = ImageProcessor.load_image(image_path)
+            except Exception as exc:  # pragma: no cover - import/runtime dependent
+                summary["errors"].append(str(exc))
+                return summary if return_summary else False
+
+            if working_image is None:
+                summary["errors"].append(f"Failed to load image from {image_path}")
+                return summary if return_summary else False
+
+        face_locations = self.detect_faces(working_image)
+        summary["faces_detected"] = len(face_locations)
+        if not face_locations:
+            summary["errors"].append("No faces detected in image")
+            return summary if return_summary else False
+
+        embeddings = self.extract_face_embeddings(working_image, face_locations)
+        summary["embeddings_extracted"] = len(embeddings)
+        if not embeddings:
+            summary["errors"].append("Failed to extract embeddings")
+            return summary if return_summary else False
+
+        for idx, bundle in enumerate(embeddings):
+            serialized = self._serialize_embedding_bundle(bundle)
+            if not serialized:
+                summary["errors"].append(
+                    f"Embedding bundle at index {idx} is empty after serialization"
+                )
+                continue
+
+            metadata_payload = dict(metadata) if metadata else {}
+            metadata_payload.setdefault("origin", "process_and_add_face")
+            if self.add_face_to_db(
+                username=username,
+                embedding=serialized,
+                source=source,
+                retries=retries,
+                delay=delay,
+                db=target_db,
+                metadata=metadata_payload,
+            ):
+                summary["faces_added"] += 1
+            else:
+                summary["errors"].append(
+                    f"Failed to persist embedding bundle {idx+1}/{len(embeddings)}"
+                )
+
+        summary["success"] = summary["faces_added"] > 0
+        if return_summary:
+            return summary
+        return summary["success"]
 
     def process_image(
         self, image_path: str

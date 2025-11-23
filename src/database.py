@@ -380,17 +380,28 @@ EMBEDDING_WEIGHTS = getattr(
 
 
 class FaceDatabase:
-    """Local JSON-based face database"""
+    """Local JSON or Firestore-backed face database."""
 
-    def __init__(self, db_path: Optional[str] = None):
-        self.use_firestore = getattr(config, "DB_TYPE", "local").lower() == "firestore"
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        project_id: Optional[str] = None,
+        db_type: Optional[str] = None,
+        collection_prefix: Optional[str] = None,
+    ):
+        db_mode = (db_type or getattr(config, "DB_TYPE", "local")).lower()
+        if db_path is not None and db_type is None:
+            # Explicit local path implies local mode unless overridden
+            db_mode = "local"
+        self.use_firestore = db_mode == "firestore"
         self.db_path = Path(db_path or config.LOCAL_DB_PATH)
         self._firestore_client = None
         self._faces_collection = None
         self._profiles_collection = None
-        self._collection_prefix = getattr(
+        self._collection_prefix = collection_prefix or getattr(
             config, "FIRESTORE_COLLECTION_PREFIX", "socialvision_"
         )
+        self._project_id_override = project_id
         self._database_id = (
             getattr(config, "FIRESTORE_DATABASE_ID", "(default)") or "(default)"
         ).strip()
@@ -473,7 +484,9 @@ class FaceDatabase:
                 "google-cloud-firestore is required for Firestore mode. Install it and set DB_TYPE=firestore."
             )
 
-        project_id = getattr(config, "FIREBASE_PROJECT_ID", None)
+        project_id = self._project_id_override or getattr(
+            config, "FIREBASE_PROJECT_ID", None
+        )
         credentials_obj, inferred_project = self._resolve_firestore_credentials()
         self._google_credentials = credentials_obj
         project_id = project_id or inferred_project
@@ -717,6 +730,40 @@ class FaceDatabase:
 
         except Exception as e:
             logger.error(f"Error adding face: {e}", exc_info=True)
+            return False
+
+    def add_or_update_face(
+        self,
+        embedding: Any,
+        username: str,
+        source: str = "profile_pic",
+        image_url: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+    ) -> bool:
+        """Append embeddings for a username, creating or updating as needed."""
+
+        metadata_payload = dict(metadata) if metadata else {}
+        metadata_payload.setdefault("operation", "add_or_update")
+
+        try:
+            summary = self.append_embeddings_to_username(
+                username,
+                [embedding],
+                source,
+                image_url=image_url,
+                metadata=metadata_payload,
+            )
+            added = summary.get("added", 0)
+            logger.info(
+                "add_or_update_face stored %s embedding(s) for %s",
+                added,
+                username,
+            )
+            return added > 0
+        except Exception as exc:
+            logger.error(
+                "add_or_update_face failed for %s: %s", username, exc, exc_info=True
+            )
             return False
 
     def get_face_by_id(self, face_id: int) -> Optional[Dict]:

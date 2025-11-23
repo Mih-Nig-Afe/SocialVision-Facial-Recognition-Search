@@ -13,11 +13,6 @@ from src.database import FaceDatabase
 from src.search_engine import SearchEngine
 from src.image_utils import ImageProcessor
 
-try:  # numpy is optional but helps normalize DeepFace payloads
-    import numpy as np
-except ImportError:  # pragma: no cover - numpy is a declared dependency
-    np = None
-
 # Try to import cv2, but make it optional
 try:
     import cv2
@@ -30,30 +25,6 @@ except ImportError:
 config = get_config()
 DEFAULT_EMBEDDING_SOURCE = getattr(config, "DEFAULT_EMBEDDING_SOURCE", "deepface")
 logger = setup_logger(__name__)
-
-
-def _normalize_embedding_value(value):
-    """Convert numpy arrays to vanilla lists and drop empty payloads."""
-
-    if value is None:
-        return None
-
-    # Prefer numpy-specific handling when available.
-    if np is not None and isinstance(value, np.ndarray):
-        if value.size == 0:
-            return None
-        return value.tolist()
-
-    if hasattr(value, "tolist"):
-        normalized = value.tolist()
-        if isinstance(normalized, (list, tuple)) and not normalized:
-            return None
-        return normalized
-
-    if isinstance(value, (list, tuple)):
-        return list(value) if value else None
-
-    return value
 
 
 # Page configuration
@@ -238,7 +209,7 @@ def main():
             username = st.text_input("Instagram Username")
             source = st.selectbox("Source", ["profile_pic", "post", "story", "reel"])
 
-        if st.button("➕ Add to Database", use_container_width=True):
+        if st.button("➕ Add / Update Face", use_container_width=True):
             if not uploaded_file or not username:
                 st.error("Please upload an image and enter a username")
             else:
@@ -256,8 +227,7 @@ def main():
                         if image is None:
                             st.error("Failed to load image")
                         else:
-                            # Detect and extract faces
-                            face_engine = FaceRecognitionEngine()
+                            face_engine = FaceRecognitionEngine(database=db)
                             face_locations = face_engine.detect_faces(image)
 
                             if not face_locations:
@@ -266,90 +236,60 @@ def main():
                                 st.info(
                                     f"Detected {len(face_locations)} face(s). Extracting embeddings..."
                                 )
-                                embeddings = face_engine.extract_face_embeddings(
+                                face_chips = face_engine.extract_face_chips(
                                     image, face_locations
                                 )
 
-                                if not embeddings:
-                                    st.error(
-                                        "Failed to extract face embeddings. DeepFace and dlib backends "
-                                        "may both be unavailable. Please check the logs for details."
-                                    )
-                                    logger.error(
-                                        "No embeddings extracted from available backends"
-                                    )
-                                elif not isinstance(embeddings, list):
-                                    st.error(
-                                        f"Unexpected embedding payload type: {type(embeddings)}. "
-                                        "Please check the logs."
-                                    )
-                                    logger.error(
-                                        "FaceRecognitionEngine returned unexpected type %s",
-                                        type(embeddings),
+                                if face_chips:
+                                    st.subheader("Detected Faces")
+                                    cols = st.columns(min(3, len(face_chips)))
+                                    for idx, chip in enumerate(face_chips):
+                                        if chip.ndim == 2:
+                                            rgb_chip = chip
+                                        elif HAS_CV2:
+                                            rgb_chip = cv2.cvtColor(
+                                                chip, cv2.COLOR_BGR2RGB
+                                            )
+                                        else:
+                                            rgb_chip = chip[:, :, ::-1]
+                                        cols[idx % len(cols)].image(
+                                            rgb_chip,
+                                            caption=f"Face {idx + 1}",
+                                            use_column_width=True,
+                                        )
+
+                                summary = face_engine.process_and_add_face(
+                                    username=username,
+                                    image=image,
+                                    source=source,
+                                    metadata={
+                                        "origin": "streamlit_add_faces",
+                                        "uploader": "app_session",
+                                    },
+                                    return_summary=True,
+                                )
+
+                                if summary.get("success"):
+                                    st.success(
+                                        f"✅ Added {summary['faces_added']} face(s) for @{username}"
                                     )
                                 else:
-                                    added_count = 0
-                                    for i, embedding in enumerate(embeddings):
-                                        try:
-                                            if isinstance(embedding, dict):
-                                                bundle = {}
-                                                for key, value in embedding.items():
-                                                    normalized = (
-                                                        _normalize_embedding_value(
-                                                            value
-                                                        )
-                                                    )
-                                                    if normalized is not None:
-                                                        bundle[key] = normalized
-                                            else:
-                                                normalized = _normalize_embedding_value(
-                                                    embedding
-                                                )
-                                                if normalized is not None:
-                                                    bundle = {
-                                                        DEFAULT_EMBEDDING_SOURCE: normalized
-                                                    }
-                                                else:
-                                                    bundle = {}
-                                            if not bundle:
-                                                logger.warning(
-                                                    "Empty embedding bundle at index %s, skipping",
-                                                    i,
-                                                )
-                                                continue
+                                    st.error(
+                                        "Failed to add or update faces. Check details below."
+                                    )
 
-                                            if db.add_face(bundle, username, source):
-                                                added_count += 1
-                                                logger.info(
-                                                    "Successfully added face %s/%s for %s",
-                                                    i + 1,
-                                                    len(embeddings),
-                                                    username,
-                                                )
-                                            else:
-                                                logger.error(
-                                                    "Failed to add face %s/%s to database",
-                                                    i + 1,
-                                                    len(embeddings),
-                                                )
-                                        except Exception as e:
-                                            logger.error(
-                                                "Error adding face %s: %s",
-                                                i + 1,
-                                                e,
-                                                exc_info=True,
-                                            )
-                                            st.error(f"Error adding face {i+1}: {e}")
+                                st.caption(
+                                    f"Detected {summary['faces_detected']} face(s); "
+                                    f"stored {summary['faces_added']} record(s)."
+                                )
 
-                                    if added_count > 0:
-                                        st.success(
-                                            f"✅ Added {added_count} face(s) to database for @{username}"
-                                        )
-                                    else:
-                                        st.error(
-                                            "Failed to add any faces to database. "
-                                            "Please check the logs for error details."
-                                        )
+                                if summary.get("errors"):
+                                    with st.expander(
+                                        "Processing details",
+                                        expanded=not summary.get("success"),
+                                    ):
+                                        for msg in summary["errors"]:
+                                            st.write(f"- {msg}")
 
                     finally:
                         Path(tmp_path).unlink(missing_ok=True)
