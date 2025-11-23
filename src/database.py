@@ -3,10 +3,35 @@
 import json
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Iterable, Tuple
 from datetime import datetime
 from src.logger import setup_logger
 from src.config import get_config
+
+try:  # Firestore Admin client (optional)
+    from google.cloud import firestore_admin_v1  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    firestore_admin_v1 = None
+
+try:  # Firestore data client (required in Firestore mode)
+    from google.cloud import firestore as google_firestore  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    google_firestore = None
+
+try:  # Google auth helpers for admin operations
+    import google.auth  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    google = None
+
+try:  # Service account credential helpers
+    from google.oauth2 import service_account  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    service_account = None
+
+try:  # Shared google api exceptions
+    from google.api_core import exceptions as google_exceptions  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    google_exceptions = None
 
 logger = setup_logger(__name__)
 config = get_config()
@@ -26,10 +51,38 @@ class FaceDatabase:
     """Local JSON-based face database"""
 
     def __init__(self, db_path: Optional[str] = None):
+        self.use_firestore = getattr(config, "DB_TYPE", "local").lower() == "firestore"
         self.db_path = Path(db_path or config.LOCAL_DB_PATH)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.data = self._load_database()
-        logger.info(f"Initialized FaceDatabase at {self.db_path}")
+        self._firestore_client = None
+        self._faces_collection = None
+        self._profiles_collection = None
+        self._collection_prefix = getattr(
+            config, "FIRESTORE_COLLECTION_PREFIX", "socialvision_"
+        )
+        self._database_id = (
+            getattr(config, "FIRESTORE_DATABASE_ID", "(default)") or "(default)"
+        ).strip()
+        self._firestore_location = getattr(
+            config, "FIRESTORE_LOCATION_ID", "us-central"
+        )
+        self._google_credentials = None
+
+        if self.use_firestore:
+            self._init_firestore()
+            self.data = {
+                "version": "1.0",
+                "created_at": datetime.now().isoformat(),
+                "faces": [],
+                "metadata": {},
+            }
+            logger.info(
+                "Initialized Firestore FaceDatabase for project %s",
+                getattr(config, "FIREBASE_PROJECT_ID", "unknown"),
+            )
+        else:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.data = self._load_database()
+            logger.info(f"Initialized FaceDatabase at {self.db_path}")
 
     @staticmethod
     def _normalize_embedding_vector(embedding: Optional[List[float]]) -> np.ndarray:
@@ -79,6 +132,172 @@ class FaceDatabase:
 
         return None
 
+    # ------------------------------------------------------------------
+    # Firestore helpers
+    # ------------------------------------------------------------------
+    def _init_firestore(self) -> None:
+        if google_firestore is None:
+            raise RuntimeError(
+                "google-cloud-firestore is required for Firestore mode. Install it and set DB_TYPE=firestore."
+            )
+
+        project_id = getattr(config, "FIREBASE_PROJECT_ID", None)
+        credentials_obj, inferred_project = self._resolve_firestore_credentials()
+        self._google_credentials = credentials_obj
+        project_id = project_id or inferred_project
+
+        if not project_id:
+            raise RuntimeError(
+                "FIREBASE_PROJECT_ID must be set (or derivable from credentials) to use Firestore"
+            )
+
+        try:
+            self._firestore_client = google_firestore.Client(
+                project=project_id,
+                credentials=self._google_credentials,
+                database=self._database_id,
+            )
+        except Exception as exc:
+            not_found = google_exceptions is not None and isinstance(
+                exc, google_exceptions.NotFound
+            )
+            if not_found and self._database_id == "(default)":
+                logger.warning(
+                    "Firestore database %s missing; attempting to create it",
+                    self._database_id,
+                )
+                self._ensure_firestore_database_exists(project_id)
+                self._firestore_client = google_firestore.Client(
+                    project=project_id,
+                    credentials=self._google_credentials,
+                    database=self._database_id,
+                )
+            else:
+                logger.error(
+                    "Unable to initialize Firestore client for database %s: %s",
+                    self._database_id,
+                    exc,
+                )
+                raise
+        prefix = self._collection_prefix
+        self._faces_collection = self._firestore_client.collection(f"{prefix}faces")
+        self._profiles_collection = self._firestore_client.collection(
+            f"{prefix}profiles"
+        )
+
+    def _resolve_firestore_credentials(self) -> Tuple[Any, Optional[str]]:
+        scopes = ["https://www.googleapis.com/auth/datastore"]
+
+        firebase_config = config.load_firebase_config()
+        if firebase_config and service_account is not None:
+            creds = service_account.Credentials.from_service_account_info(
+                firebase_config, scopes=scopes
+            )
+            return creds, firebase_config.get("project_id")
+
+        config_path = getattr(config, "FIREBASE_CONFIG_PATH", None)
+        if (
+            service_account is not None
+            and config_path
+            and Path(config_path).expanduser().exists()
+        ):
+            creds = service_account.Credentials.from_service_account_file(
+                str(Path(config_path).expanduser()), scopes=scopes
+            )
+            return creds, getattr(creds, "project_id", None)
+
+        if google is None:
+            raise RuntimeError(
+                "google-auth is required to resolve Firestore credentials"
+            )
+
+        creds, inferred_project = google.auth.default(scopes=scopes)
+        return creds, inferred_project
+
+    def _ensure_firestore_database_exists(self, project_id: str) -> None:
+        """Create the default Firestore database if it does not exist."""
+
+        if firestore_admin_v1 is None:
+            raise RuntimeError(
+                "google-cloud-firestore-admin is required to auto-create Firestore databases"
+            )
+        if google is None:
+            raise RuntimeError(
+                "google-auth is required to auto-create Firestore databases"
+            )
+        if google_exceptions is None:
+            raise RuntimeError(
+                "google-api-core is required to detect Firestore provisioning errors"
+            )
+
+        logger.info(
+            "Ensuring Firestore database %s (%s) exists", self._database_id, project_id
+        )
+        scopes = ["https://www.googleapis.com/auth/datastore"]
+        if self._google_credentials is None:
+            credentials_to_use, _ = google.auth.default(scopes=scopes)
+        else:
+            credentials_to_use = self._google_credentials
+
+        client = firestore_admin_v1.FirestoreAdminClient(credentials=credentials_to_use)
+        parent = f"projects/{project_id}"
+        database_path = f"{parent}/databases/{self._database_id}"
+
+        try:
+            existing = client.get_database(name=database_path)
+            if existing:
+                logger.info("Firestore database %s already exists", database_path)
+                return
+        except google_exceptions.NotFound:
+            pass
+
+        database = firestore_admin_v1.Database(
+            name=database_path,
+            location_id=self._firestore_location,
+            type_=firestore_admin_v1.Database.DatabaseType.FIRESTORE_NATIVE,
+        )
+        operation = client.create_database(
+            parent=parent, database=database, database_id=self._database_id
+        )
+        logger.info("Waiting for Firestore database creation operation to finish...")
+        operation.result(timeout=120)
+        logger.info("Firestore database %s created", database_path)
+
+    def _firestore_face_from_snapshot(self, snapshot) -> Dict[str, Any]:
+        data = snapshot.to_dict() or {}
+        data.setdefault("id", snapshot.id)
+        data.setdefault("added_at", datetime.now().isoformat())
+        return data
+
+    def _firestore_faces_iter(
+        self, username: Optional[str] = None
+    ) -> Iterable[Dict[str, Any]]:
+        if not self._faces_collection:
+            return []
+        query = self._faces_collection
+        if username:
+            query = query.where("username", "==", username)
+        return (self._firestore_face_from_snapshot(doc) for doc in query.stream())
+
+    def _write_profile_metadata(
+        self, username: str, profile_vector: Optional[np.ndarray], count: int
+    ) -> None:
+        if self.use_firestore:
+            payload = {
+                "last_updated": datetime.now().isoformat(),
+                "embeddings_count": count,
+            }
+            if profile_vector is not None:
+                payload["profile_embedding"] = profile_vector.tolist()
+            self._profiles_collection.document(username).set(payload, merge=True)
+        else:
+            self.data.setdefault("metadata", {})
+            meta = self.data["metadata"].setdefault(username, {})
+            if profile_vector is not None:
+                meta["profile_embedding"] = profile_vector.tolist()
+            meta["last_updated"] = datetime.now().isoformat()
+            meta["embeddings_count"] = count
+
     def _load_database(self) -> Dict[str, Any]:
         try:
             if self.db_path.exists():
@@ -95,6 +314,10 @@ class FaceDatabase:
         }
 
     def _save_database(self) -> bool:
+        if self.use_firestore:
+            # Firestore writes happen per-operation; nothing to persist locally
+            return True
+
         try:
             with open(self.db_path, "w") as f:
                 json.dump(self.data, f, indent=2)
@@ -150,7 +373,6 @@ class FaceDatabase:
             )
 
             face_record = {
-                "id": len(self.data["faces"]),
                 "embedding": primary_embedding,
                 "embeddings": bundle,
                 "username": username,
@@ -160,9 +382,24 @@ class FaceDatabase:
                 "metadata": metadata or {},
             }
 
+            if self.use_firestore:
+                doc_ref = self._faces_collection.document()
+                face_record["id"] = doc_ref.id
+                doc_ref.set(face_record)
+                # Refresh centroid/profile cache for this user
+                self.get_profile_embedding_for_username(username, force_refresh=True)
+                logger.info(
+                    "Stored face for %s in Firestore collection %s",
+                    username,
+                    self._faces_collection.id,
+                )
+                return True
+
+            face_record["id"] = len(self.data["faces"])
             self.data["faces"].append(face_record)
 
             if self._save_database():
+                self.get_profile_embedding_for_username(username, force_refresh=True)
                 logger.info(
                     "Successfully added face for user %s from %s (embedding_dim=%s)",
                     username,
@@ -181,6 +418,18 @@ class FaceDatabase:
 
     def get_face_by_id(self, face_id: int) -> Optional[Dict]:
         try:
+            if self.use_firestore:
+                doc = self._faces_collection.document(str(face_id)).get()
+                if doc.exists:
+                    return self._firestore_face_from_snapshot(doc)
+                # Fall back to querying on the stored id field
+                matches = self._faces_collection.where("id", "==", str(face_id)).limit(
+                    1
+                )
+                for snapshot in matches.stream():
+                    return self._firestore_face_from_snapshot(snapshot)
+                return None
+
             for face in self.data["faces"]:
                 if face["id"] == face_id:
                     return face
@@ -190,12 +439,16 @@ class FaceDatabase:
 
     def get_faces_by_username(self, username: str) -> List[Dict]:
         try:
+            if self.use_firestore:
+                return list(self._firestore_faces_iter(username))
             return [face for face in self.data["faces"] if face["username"] == username]
         except Exception as e:
             logger.error(f"Error getting faces by username: {e}")
             return []
 
-    def get_profile_embedding_for_username(self, username: str) -> Optional[np.ndarray]:
+    def get_profile_embedding_for_username(
+        self, username: str, force_refresh: bool = False
+    ) -> Optional[np.ndarray]:
         """
         Compute or retrieve an aggregated (centroid) normalized embedding for a username.
 
@@ -203,10 +456,18 @@ class FaceDatabase:
             L2-normalized numpy vector representing the user's profile, or None.
         """
         try:
-            # If metadata contains cached profile embedding, try to use it
-            meta = self.data.get("metadata", {}).get(username, {})
-            if meta and "profile_embedding" in meta:
-                return self._normalize_embedding_vector(meta["profile_embedding"])
+            if self.use_firestore:
+                meta_doc = self._profiles_collection.document(username).get()
+                if meta_doc.exists and not force_refresh:
+                    payload = meta_doc.to_dict() or {}
+                    if "profile_embedding" in payload:
+                        return self._normalize_embedding_vector(
+                            payload["profile_embedding"]
+                        )
+            else:
+                meta = self.data.get("metadata", {}).get(username, {})
+                if meta and "profile_embedding" in meta and not force_refresh:
+                    return self._normalize_embedding_vector(meta["profile_embedding"])
 
             # Otherwise compute from all face records for username
             faces = self.get_faces_by_username(username)
@@ -230,7 +491,9 @@ class FaceDatabase:
             norm = np.linalg.norm(centroid)
             if norm == 0:
                 return None
-            return centroid / norm
+            profile_vec = centroid / norm
+            self._write_profile_metadata(username, profile_vec, len(faces))
+            return profile_vec
         except Exception as e:
             logger.error(f"Error computing profile embedding for {username}: {e}")
             return None
@@ -254,11 +517,8 @@ class FaceDatabase:
             if not embeddings:
                 return summary
 
-            # Ensure metadata container exists
-            self.data.setdefault("metadata", {})
-            self.data["metadata"].setdefault(username, {})
-
             added = 0
+            face_records: List[Dict[str, Any]] = []
             for emb in embeddings:
                 try:
                     if isinstance(emb, dict):
@@ -278,9 +538,7 @@ class FaceDatabase:
                 primary_embedding = self._select_primary_embedding(bundle)
                 if not primary_embedding:
                     continue
-
                 face_record = {
-                    "id": len(self.data["faces"]),
                     "embedding": primary_embedding,
                     "embeddings": bundle,
                     "username": username,
@@ -289,25 +547,33 @@ class FaceDatabase:
                     "added_at": datetime.now().isoformat(),
                     "metadata": metadata or {},
                 }
-
-                self.data["faces"].append(face_record)
+                face_records.append(face_record)
                 added += 1
 
-            # Recompute and cache profile embedding
-            profile = self.get_profile_embedding_for_username(username)
-            if profile is not None:
-                self.data["metadata"][username]["profile_embedding"] = profile.tolist()
-                self.data["metadata"][username][
-                    "last_updated"
-                ] = datetime.now().isoformat()
-                self.data["metadata"][username]["embeddings_count"] = len(
-                    self.get_faces_by_username(username)
-                )
-                summary["updated_profile_dim"] = profile.shape[0]
+            if added == 0:
+                return summary
 
-            # Persist to disk
-            if not self._save_database():
-                logger.error("Failed to save database after appending embeddings")
+            if self.use_firestore:
+                if not self._firestore_client:
+                    raise RuntimeError("Firestore client not initialized")
+                batch = self._firestore_client.batch()
+                for record in face_records:
+                    doc_ref = self._faces_collection.document()
+                    record["id"] = doc_ref.id
+                    batch.set(doc_ref, record)
+                batch.commit()
+            else:
+                for record in face_records:
+                    record["id"] = len(self.data["faces"])
+                    self.data["faces"].append(record)
+                if not self._save_database():
+                    logger.error("Failed to save database after appending embeddings")
+
+            profile = self.get_profile_embedding_for_username(
+                username, force_refresh=True
+            )
+            if profile is not None:
+                summary["updated_profile_dim"] = profile.shape[0]
             summary["added"] = added
             return summary
 
@@ -332,27 +598,51 @@ class FaceDatabase:
             candidates = []
 
             # Iterate over usernames present in metadata or faces
-            usernames = set(face["username"] for face in self.data.get("faces", []))
-            for username in usernames:
-                profile = self.get_profile_embedding_for_username(username)
-                if profile is None:
-                    continue
+            if self.use_firestore:
+                profile_docs = self._profiles_collection.stream()
+                for doc in profile_docs:
+                    username = doc.id
+                    payload = doc.to_dict() or {}
+                    profile_raw = payload.get("profile_embedding")
+                    if not profile_raw:
+                        continue
+                    try:
+                        profile = self._normalize_embedding_vector(profile_raw)
+                    except ValueError:
+                        continue
+                    if profile.shape != query_vec.shape:
+                        continue
+                    similarity = float(np.dot(profile, query_vec))
+                    if similarity >= threshold:
+                        candidates.append(
+                            {
+                                "username": username,
+                                "similarity_score": similarity,
+                                "embeddings_count": payload.get("embeddings_count", 0),
+                            }
+                        )
+            else:
+                usernames = set(face["username"] for face in self.data.get("faces", []))
+                for username in usernames:
+                    profile = self.get_profile_embedding_for_username(username)
+                    if profile is None:
+                        continue
 
-                if profile.shape != query_vec.shape:
-                    # Dimension mismatch - skip
-                    continue
+                    if profile.shape != query_vec.shape:
+                        # Dimension mismatch - skip
+                        continue
 
-                similarity = float(np.dot(profile, query_vec))
-                if similarity >= threshold:
-                    candidates.append(
-                        {
-                            "username": username,
-                            "similarity_score": similarity,
-                            "embeddings_count": len(
-                                self.get_faces_by_username(username)
-                            ),
-                        }
-                    )
+                    similarity = float(np.dot(profile, query_vec))
+                    if similarity >= threshold:
+                        candidates.append(
+                            {
+                                "username": username,
+                                "similarity_score": similarity,
+                                "embeddings_count": len(
+                                    self.get_faces_by_username(username)
+                                ),
+                            }
+                        )
 
             candidates.sort(key=lambda item: item["similarity_score"], reverse=True)
             return candidates[:top_k]
@@ -367,7 +657,13 @@ class FaceDatabase:
             embeddings = []
             target_dim: Optional[int] = None
 
-            for face in self.data["faces"]:
+            faces_iter: Iterable[Dict[str, Any]]
+            if self.use_firestore:
+                faces_iter = self._firestore_faces_iter()
+            else:
+                faces_iter = self.data["faces"]
+
+            for face in faces_iter:
                 try:
                     vec = self._normalize_embedding_vector(face["embedding"])
                 except ValueError:
@@ -398,9 +694,6 @@ class FaceDatabase:
         top_k: int = 50,
     ) -> List[Dict]:
         try:
-            if not self.data["faces"]:
-                return []
-
             query_bundle: Dict[str, np.ndarray] = {}
             if isinstance(query_embedding, dict):
                 for key, value in query_embedding.items():
@@ -420,7 +713,17 @@ class FaceDatabase:
 
             results: List[Dict[str, Any]] = []
 
-            for face in self.data["faces"]:
+            faces_iter: Iterable[Dict[str, Any]]
+            if self.use_firestore:
+                faces_iter = list(self._firestore_faces_iter())
+                if not faces_iter:
+                    return []
+            else:
+                faces_iter = self.data["faces"]
+                if not faces_iter:
+                    return []
+
+            for face in faces_iter:
                 stored_bundle = face.get("embeddings") or {}
                 if not stored_bundle and face.get("embedding"):
                     stored_bundle = {DEFAULT_EMBEDDING_SOURCE: face["embedding"]}
@@ -474,6 +777,22 @@ class FaceDatabase:
 
     def get_statistics(self) -> Dict[str, Any]:
         try:
+            if self.use_firestore:
+                usernames = set()
+                sources: Dict[str, int] = {}
+                total = 0
+                for face in self._firestore_faces_iter():
+                    total += 1
+                    usernames.add(face.get("username"))
+                    src = face.get("source", "unknown")
+                    sources[src] = sources.get(src, 0) + 1
+                return {
+                    "total_faces": total,
+                    "unique_users": len([u for u in usernames if u]),
+                    "sources": sources,
+                    "created_at": self.data.get("created_at"),
+                }
+
             usernames = set(face["username"] for face in self.data["faces"])
             sources: Dict[str, int] = {}
             for face in self.data["faces"]:
@@ -492,6 +811,14 @@ class FaceDatabase:
 
     def clear_database(self) -> bool:
         try:
+            if self.use_firestore:
+                for doc in self._faces_collection.stream():
+                    doc.reference.delete()
+                for doc in self._profiles_collection.stream():
+                    doc.reference.delete()
+                logger.warning("Firestore face database cleared")
+                return True
+
             self.data = {
                 "version": "1.0",
                 "created_at": datetime.now().isoformat(),

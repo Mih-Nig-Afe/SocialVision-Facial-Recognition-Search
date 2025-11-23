@@ -166,5 +166,38 @@ def test_enrich_face_from_image_returns_not_found(temp_db):
     assert result["result"] == "Person not found."
 
 
+def test_search_by_image_auto_enriches_on_match(temp_db):
+    """Regular search should append embeddings for the best match."""
+
+    base_embedding = [1.0, 0.0, 0.0, 0.0]
+    temp_db.add_face(base_embedding, "known_user", "profile")
+
+    engine = SearchEngine(temp_db)
+
+    class StubFaceEngine:
+        def detect_faces(self, image):  # pragma: no cover - simple stub
+            return [(0, 1, 1, 0)]
+
+        def extract_face_embeddings(self, image, face_locations):  # pragma: no cover
+            return [
+                {
+                    "deepface": [1.0, 0.0, 0.0, 0.0],
+                    "dlib": [1.0, 0.0, 0.0, 0.0],
+                }
+            ]
+
+    engine.face_engine = StubFaceEngine()
+    dummy_image = np.zeros((4, 4, 3), dtype=np.uint8)
+
+    results = engine.search_by_image(dummy_image, threshold=0.5, top_k=5)
+
+    faces_for_user = temp_db.get_faces_by_username("known_user")
+    assert len(faces_for_user) >= 2  # appended new embedding
+
+    enrichment = results["faces"][0]["enrichment"]
+    assert enrichment is not None
+    assert enrichment["added"] >= 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -33,7 +33,7 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 | **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, automatic fallbacks if TensorFlow is unavailable. |
 | **Face Search Engine** | Detection, embedding, cosine similarity search, identity aggregation, configurable thresholds, enrichment workflows that continuously learn from matches. |
 | **Streamlit Command Center** | Tabs for Search, Add Faces, Analytics; live metrics, threshold sliders, and enrichment summaries meant for operator demos. |
-| **Data Layer** | Versioned JSON database, per-face metadata, cached profile centroids per username, normalized bundles for deterministic math. |
+| **Data Layer** | Local JSON store for offline demos **or** Firestore mode for centralized persistence, per-face metadata, cached profile centroids per username, normalized bundles for deterministic math. |
 | **Operations** | Docker image with BuildKit pip caching (no repeated TensorFlow wheel downloads), DeepFace weight prefetch, CLI demo script, logging + health checks. |
 | **Quality & Docs** | Pytest coverage for engine/database/search, reproducible fixtures, comprehensive docs mirroring professional OSS projects. |
 
@@ -153,8 +153,35 @@ Key environment variables (see `src/config.py` for defaults):
 | `DEEPFACE_EMBEDDING_WEIGHT` / `DLIB_EMBEDDING_WEIGHT` | Similarity weights applied during search. |
 | `FACE_SIMILARITY_THRESHOLD` | Global cosine similarity cut-off. |
 | `LOCAL_DB_PATH` | Path to JSON database (default `data/faces_database.json`). |
+| `DB_TYPE` | `local` (JSON) or `firestore`; controls which backend `FaceDatabase` instantiates. |
+| `FIRESTORE_DATABASE_ID` | Firestore database ID (default `(default)`). |
+| `FIRESTORE_LOCATION_ID` | Region for Firestore (e.g. `us-central`, `nam5`). |
 
 Add optional secrets (Firebase, etc.) via `.env` or environment-specific config classes.
+
+### Using Firestore instead of the local JSON database
+
+The data layer can be switched to **Google Cloud Firestore (native mode)** so that no facial embeddings are ever written to local disk. To connect the app to your project:
+
+1. **Create (or plan) a Firestore database** in the Firebase console (select *Firestore*, not the Realtime Database), choose *Native* mode, and note the region (e.g. `nam5`). If the default database does not yet exist, SocialVision can now auto-provision it via the Firestore Admin API.
+2. **Generate a service-account key** with `Cloud Datastore Owner` **or** a role that includes `databases.create`, `databases.get`, and standard read/write permissions (e.g. `roles/datastore.user`). Download the JSON key and place it somewhere in the repo, e.g. `config/firebase_config.json`.
+3. **Install the cloud persistence dependencies** (`firebase-admin`, `google-cloud-firestore`, `google-auth`) using `pip install -r requirements.txt`, then export the following variables before running Streamlit or the Docker image:
+
+    ```bash
+    export DB_TYPE=firestore               # tells FaceDatabase to use Firestore
+    export FIREBASE_ENABLED=true           # optional flag used elsewhere in the app
+    export FIREBASE_PROJECT_ID="your-project-id"
+    export FIREBASE_CONFIG_PATH="$PWD/config/firebase_config.json"
+    export FIRESTORE_COLLECTION_PREFIX="socialvision_"   # optional namespace
+    export FIRESTORE_DATABASE_ID="(default)"             # leave as default unless you created a named DB
+    export FIRESTORE_LOCATION_ID="us-central"            # region/nam5/etc from step 1
+    ```
+
+    When running in Docker, mount the credentials file (e.g. `-v $PWD/config/firebase_config.json:/app/config/firebase_config.json:ro`) and pass the same environment variables via `docker compose`.
+
+4. Start the app (`streamlit run src/app.py` or `docker compose up`). If the `(default)` database is missing, SocialVision will invoke the Firestore Admin API (using your service account) to create it in the region you specified. Afterwards, the backend creates two collections—`<prefix>faces` and `<prefix>profiles`—and every new embedding bundle is written directly to Firestore. Profile centroids stay cached in `<prefix>profiles` for fast identity searches.
+
+With `DB_TYPE=firestore`, the project never exports face data to `data/faces_database.json`; enrichment, search, and analytics all operate against Firestore in real time.
 
 ---
 

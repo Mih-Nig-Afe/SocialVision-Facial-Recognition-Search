@@ -29,6 +29,74 @@ class SearchEngine:
         self.face_engine = FaceRecognitionEngine()
         logger.info("Initialized SearchEngine")
 
+    @staticmethod
+    def _serialize_embedding_bundle(embedding: Any) -> Optional[Dict[str, List[float]]]:
+        """Convert numpy-backed embedding bundles into plain python lists."""
+
+        if not embedding:
+            return None
+
+        def _to_list(value: Any) -> Optional[List[float]]:
+            if value is None:
+                return None
+            if hasattr(value, "tolist"):
+                value = value.tolist()
+            elif isinstance(value, tuple):
+                value = list(value)
+            elif isinstance(value, list):
+                value = list(value)
+            else:
+                # unsupported scalar value
+                return None
+
+            return value if len(value) > 0 else None
+
+        if isinstance(embedding, dict):
+            serialized: Dict[str, List[float]] = {}
+            for key, value in embedding.items():
+                converted = _to_list(value)
+                if converted is not None:
+                    serialized[key] = converted
+            return serialized or None
+
+        converted = _to_list(embedding)
+        if converted is None:
+            return None
+        return {DEFAULT_EMBEDDING_SOURCE: converted}
+
+    def _auto_enrich_identity(
+        self,
+        username: str,
+        embedding_bundle: Optional[Dict[str, List[float]]],
+        similarity: Optional[float],
+    ) -> Optional[Dict[str, Any]]:
+        """Append new embeddings to an identity profile when a confident match occurs."""
+
+        if not username or not embedding_bundle:
+            return None
+
+        try:
+            metadata = {
+                "origin": "search_enrichment",
+                "trigger_similarity": (
+                    float(similarity) if similarity is not None else None
+                ),
+            }
+            summary = self.database.append_embeddings_to_username(
+                username,
+                [embedding_bundle],
+                source="search_auto_enrich",
+                metadata=metadata,
+            )
+            summary["username"] = username
+            summary["trigger_similarity"] = metadata["trigger_similarity"]
+            return summary
+        except Exception as exc:
+            logger.error(
+                "Auto-enrichment failed for %s: %s", username, exc, exc_info=True
+            )
+            return {"username": username, "error": str(exc)}
+
     def search_by_embedding(
         self,
         query_embedding: Any,
@@ -111,6 +179,7 @@ class SearchEngine:
             logger.info(f"Searching database for {len(embeddings)} face(s)...")
             for i, location in enumerate(face_locations):
                 embedding = embeddings[i] if i < len(embeddings) else {}
+                enrichment_summary = None
                 if not embedding:
                     logger.warning("No embeddings available for face %s", i)
                     face_results = []
@@ -119,11 +188,21 @@ class SearchEngine:
                         embedding, threshold=threshold, top_k=top_k
                     )
 
+                    if face_results:
+                        top_match = face_results[0]
+                        username = top_match.get("username")
+                        similarity = top_match.get("similarity_score")
+                        serialized_bundle = self._serialize_embedding_bundle(embedding)
+                        enrichment_summary = self._auto_enrich_identity(
+                            username, serialized_bundle, similarity
+                        )
+
                 results["faces"].append(
                     {
                         "face_index": i,
                         "location": location,
                         "matches": face_results,
+                        "enrichment": enrichment_summary,
                     }
                 )
                 results["total_matches"] += len(face_results)

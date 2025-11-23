@@ -135,6 +135,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+config/firebase_config.json
+*.firebase-adminsdk-*.json
 
 # Spyder project settings
 .spyderproject

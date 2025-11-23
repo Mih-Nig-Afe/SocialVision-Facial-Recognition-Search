@@ -37,6 +37,12 @@ class Config:
         "FIREBASE_CONFIG_PATH", str(CONFIG_DIR / "firebase_config.json")
     )
     FIREBASE_ENABLED = os.getenv("FIREBASE_ENABLED", "False").lower() == "true"
+    FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
+    FIRESTORE_COLLECTION_PREFIX = os.getenv(
+        "FIRESTORE_COLLECTION_PREFIX", "socialvision_"
+    )
+    FIRESTORE_DATABASE_ID = os.getenv("FIRESTORE_DATABASE_ID", "(default)")
+    FIRESTORE_LOCATION_ID = os.getenv("FIRESTORE_LOCATION_ID", "us-central")
 
     # Face Recognition settings
     FACE_RECOGNITION_MODEL = "hog"  # "hog" or "cnn" (cnn is more accurate but slower)

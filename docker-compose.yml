@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: socialvision-app
+    env_file:
+      - .env
     ports:
       - "8501:8501"  # Streamlit
       - "8000:8000"  # FastAPI (optional)
@@ -21,6 +23,12 @@ services:
       - STREAMLIT_SERVER_PORT=8501
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
       - STREAMLIT_LOGGER_LEVEL=info
+      - DB_TYPE=firestore
+      - FIREBASE_ENABLED=true
+      - FIREBASE_PROJECT_ID=face-recognition-122f5
+      - FIRESTORE_COLLECTION_PREFIX=socialvision_
+      - FIRESTORE_DATABASE_ID=(default)
+      - FIRESTORE_LOCATION_ID=us-central
       - FIREBASE_CONFIG_PATH=/app/config/firebase_config.json
     networks:
       - socialvision-network
