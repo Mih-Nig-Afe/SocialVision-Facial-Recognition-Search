@@ -10,8 +10,10 @@ from src.config import get_config
 
 try:  # Firestore Admin client (optional)
     from google.cloud import firestore_admin_v1  # type: ignore
+    from google.cloud.firestore_admin_v1 import types as firestore_admin_types  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
     firestore_admin_v1 = None
+    firestore_admin_types = None
 
 try:  # Firestore data client (required in Firestore mode)
     from google.cloud import firestore as google_firestore  # type: ignore
@@ -32,6 +34,336 @@ try:  # Shared google api exceptions
     from google.api_core import exceptions as google_exceptions  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
     google_exceptions = None
+
+#
+# Additional imports required for REST-based Firestore fallback
+import time
+import requests
+
+try:
+    # For refreshing service account tokens (optional)
+    from google.auth.transport.requests import Request as _GoogleAuthRequest  # type: ignore
+except Exception:
+    _GoogleAuthRequest = None
+
+
+def _get_bearer_token_from_credentials(creds) -> str:
+    """Ensure credentials are fresh and return an OAuth2 bearer token string.
+
+    This uses google-auth service account credentials when available. If the
+    credentials object already contains a valid token, it will be used.
+    """
+    if creds is None:
+        raise RuntimeError("No credentials available for Firestore REST client")
+
+    # If credentials already have a token and it's still valid, use it
+    token = getattr(creds, "token", None)
+    expiry = getattr(creds, "expiry", None)
+    if token and expiry:
+        try:
+            # expiry may be a datetime; if far in future we can reuse
+            if expiry.timestamp() - time.time() > 60:
+                return token
+        except Exception:
+            pass
+
+    # Otherwise try to refresh using google.auth.transport.requests.Request
+    if _GoogleAuthRequest is None:
+        # As a last resort, try to return existing token if present
+        if token:
+            return token
+        raise RuntimeError(
+            "Cannot refresh credentials: google.auth.transport.requests.Request is not available"
+        )
+
+    request = _GoogleAuthRequest()
+    try:
+        creds.refresh(request)
+    except Exception as exc:
+        raise RuntimeError("Failed to refresh service account credentials: %s" % exc)
+
+    token = getattr(creds, "token", None)
+    if not token:
+        raise RuntimeError("Unable to obtain access token from credentials")
+    return token
+
+
+class RestDocumentSnapshot:
+    """Minimal snapshot wrapper for a document returned by Firestore REST API."""
+
+    def __init__(self, name: str, fields: dict):
+        # name is full resource name: projects/{p}/databases/(default)/documents/{col}/{doc}
+        self._name = name
+        self.id = name.split("/")[-1]
+        self._fields = fields or {}
+
+    def to_dict(self) -> dict:
+        # Firestore REST returns typed fields. Convert simple number/string/array types
+        result = {}
+        for k, v in self._fields.items():
+            # Try to unwrap common field types
+            if "stringValue" in v:
+                result[k] = v["stringValue"]
+            elif "doubleValue" in v:
+                result[k] = float(v["doubleValue"])
+            elif "integerValue" in v:
+                try:
+                    result[k] = int(v["integerValue"])
+                except Exception:
+                    result[k] = v["integerValue"]
+            elif "arrayValue" in v and "values" in v["arrayValue"]:
+                # untyped arrays: map values recursively for simple primitives
+                arr = []
+                for item in v["arrayValue"]["values"]:
+                    if "doubleValue" in item:
+                        arr.append(float(item["doubleValue"]))
+                    elif "integerValue" in item:
+                        try:
+                            arr.append(int(item["integerValue"]))
+                        except Exception:
+                            arr.append(item["integerValue"])
+                    elif "stringValue" in item:
+                        arr.append(item["stringValue"])
+                    else:
+                        # fallback to raw representation
+                        arr.append(item)
+                result[k] = arr
+            elif "mapValue" in v and "fields" in v["mapValue"]:
+                # nested map: simple recursive conversion
+                nested = {}
+                for nk, nv in v["mapValue"]["fields"].items():
+                    if "stringValue" in nv:
+                        nested[nk] = nv["stringValue"]
+                    elif "doubleValue" in nv:
+                        nested[nk] = float(nv["doubleValue"])
+                    elif "integerValue" in nv:
+                        try:
+                            nested[nk] = int(nv["integerValue"])
+                        except Exception:
+                            nested[nk] = nv["integerValue"]
+                    else:
+                        nested[nk] = nv
+                result[k] = nested
+            else:
+                # unknown typed field: put raw
+                result[k] = v
+        return result
+
+
+class RestCollection:
+    def __init__(self, client, collection_path: str):
+        self._client = client
+        # collection_path is the tail e.g. socialvision_faces
+        self._collection_path = collection_path
+
+    def document(self, doc_id: Optional[str] = None):
+        # Create a pseudo-document reference object
+        return RestDocument(self._client, self._collection_path, doc_id)
+
+    def stream(self):
+        # List documents in collection
+        return self._client.list_documents(self._collection_path)
+
+    def where(self, field_name, op, value):
+        # For simple equality queries only; return an object with stream()
+        return self._client.query_collection(self._collection_path, field_name, value)
+
+    @property
+    def id(self) -> str:
+        # Match attribute exposed by native Firestore collection references
+        return self._collection_path
+
+
+class RestDocument:
+    def __init__(self, client, collection_path: str, doc_id: Optional[str]):
+        self._client = client
+        self._collection_path = collection_path
+        self.id = doc_id or self._client.make_id()
+
+    def set(self, payload: dict, merge: bool = False):
+        return self._client.set_document(
+            self._collection_path, self.id, payload, merge=merge
+        )
+
+    def get(self):
+        doc = self._client.get_document(self._collection_path, self.id)
+        if doc is None:
+
+            class _Fake:
+                exists = False
+
+            return _Fake()
+        snapshot = RestDocumentSnapshot(doc["name"], doc.get("fields", {}))
+
+        # emulate .exists attribute and .to_dict()
+        class _Snap:
+            def __init__(self, snap):
+                self._snap = snap
+                self.exists = True
+
+            def to_dict(self):
+                return snap.to_dict()
+
+        snap = snapshot
+        wrapper = type(
+            "_SnapWrapper",
+            (),
+            {"exists": True, "to_dict": lambda self=None: snap.to_dict()},
+        )()
+        return wrapper
+
+    @property
+    def reference(self):
+        # Used for deletion in clear_database
+        return self
+
+    def delete(self):
+        return self._client.delete_document(self._collection_path, self.id)
+
+
+class RestBatch:
+    def __init__(self, client):
+        self._client = client
+        self._writes = []
+
+    def set(self, doc_ref: RestDocument, record: dict):
+        self._writes.append((doc_ref._collection_path, doc_ref.id, record))
+
+    def commit(self):
+        for col, doc_id, record in self._writes:
+            self._client.set_document(col, doc_id, record)
+        return True
+
+
+class RestFirestoreClient:
+    def __init__(self, project: str, credentials=None):
+        self.project = project
+        self._creds = credentials
+        self._base = f"https://firestore.googleapis.com/v1/projects/{project}/databases/(default)/documents"
+
+    def collection(self, name: str):
+        return RestCollection(self, name)
+
+    def make_id(self) -> str:
+        # fallback ID generator
+        return str(int(time.time() * 1000))
+
+    def _auth_headers(self):
+        token = _get_bearer_token_from_credentials(self._creds)
+        return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    def list_documents(self, collection_path: str):
+        url = f"{self._base}/{collection_path}"
+        resp = requests.get(url, headers=self._auth_headers())
+        if resp.status_code == 404:
+            return []
+        resp.raise_for_status()
+        data = resp.json()
+        docs = data.get("documents", [])
+        for d in docs:
+            name = d.get("name")
+            fields = d.get("fields", {})
+            yield RestDocumentSnapshot(name, fields)
+
+    def get_document(self, collection_path: str, doc_id: str):
+        url = f"{self._base}/{collection_path}/{doc_id}"
+        resp = requests.get(url, headers=self._auth_headers())
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
+    def set_document(
+        self, collection_path: str, doc_id: str, payload: dict, merge: bool = False
+    ):
+        # Convert simple python dict to Firestore REST typed fields for arrays and scalars
+        def _to_fields(obj):
+            fields = {}
+            for k, v in obj.items():
+                if v is None:
+                    continue
+                if isinstance(v, str):
+                    fields[k] = {"stringValue": v}
+                elif isinstance(v, bool):
+                    fields[k] = {"booleanValue": v}
+                elif isinstance(v, int):
+                    fields[k] = {"integerValue": str(v)}
+                elif isinstance(v, float):
+                    fields[k] = {"doubleValue": v}
+                elif isinstance(v, list):
+                    arr = []
+                    for item in v:
+                        if isinstance(item, str):
+                            arr.append({"stringValue": item})
+                        elif isinstance(item, int):
+                            arr.append({"integerValue": str(item)})
+                        elif isinstance(item, float):
+                            arr.append({"doubleValue": item})
+                        else:
+                            # fallback to string
+                            arr.append({"stringValue": str(item)})
+                    fields[k] = {"arrayValue": {"values": arr}}
+                elif isinstance(v, dict):
+                    fields[k] = {"mapValue": {"fields": _to_fields(v)}}
+                else:
+                    fields[k] = {"stringValue": str(v)}
+            return fields
+
+        body = {"fields": _to_fields(payload)}
+
+        if merge:
+            # Merges must target an existing document
+            url = f"{self._base}/{collection_path}/{doc_id}"
+            resp = requests.patch(url, headers=self._auth_headers(), json=body)
+        else:
+            # Firestore REST API requires POST for creating documents with custom IDs
+            url = f"{self._base}/{collection_path}"
+            params = {"documentId": doc_id}
+            resp = requests.post(
+                url, headers=self._auth_headers(), params=params, json=body
+            )
+            if resp.status_code == 409:
+                # Document already exists, fall back to patch/overwrite
+                url = f"{self._base}/{collection_path}/{doc_id}"
+                resp = requests.patch(url, headers=self._auth_headers(), json=body)
+
+        if resp.status_code in (200, 201):
+            return True
+
+        resp.raise_for_status()
+        return True
+
+    def delete_document(self, collection_path: str, doc_id: str):
+        url = f"{self._base}/{collection_path}/{doc_id}"
+        resp = requests.delete(url, headers=self._auth_headers())
+        if resp.status_code in (200, 204):
+            return True
+        if resp.status_code == 404:
+            return False
+        resp.raise_for_status()
+
+    def batch(self):
+        return RestBatch(self)
+
+    def query_collection(self, collection_path: str, field_name: str, value):
+        # Very small helper that lists documents and filters by field equality
+        docs = list(self.list_documents(collection_path))
+        filtered = []
+        for d in docs:
+            payload = d.to_dict()
+            if payload.get(field_name) == value:
+                filtered.append(d)
+
+        class _Q:
+            def __init__(self, docs):
+                self._docs = docs
+
+            def stream(self):
+                for d in self._docs:
+                    yield d
+
+        return _Q(filtered)
+
 
 logger = setup_logger(__name__)
 config = get_config()
@@ -62,9 +394,9 @@ class FaceDatabase:
         self._database_id = (
             getattr(config, "FIRESTORE_DATABASE_ID", "(default)") or "(default)"
         ).strip()
-        self._firestore_location = getattr(
-            config, "FIRESTORE_LOCATION_ID", "us-central"
-        )
+        # self._firestore_location = getattr(
+        #     config, "FIRESTORE_LOCATION_ID", "us-central"
+        # )
         self._google_credentials = None
 
         if self.use_firestore:
@@ -152,33 +484,16 @@ class FaceDatabase:
             )
 
         try:
-            self._firestore_client = google_firestore.Client(
-                project=project_id,
-                credentials=self._google_credentials,
-                database=self._database_id,
+            # Use REST-based Firestore client (works on Firebase Spark plan)
+            self._firestore_client = RestFirestoreClient(
+                project_id, credentials=self._google_credentials
             )
         except Exception as exc:
-            not_found = google_exceptions is not None and isinstance(
-                exc, google_exceptions.NotFound
+            logger.error(
+                "Unable to initialize Firestore REST client: %s",
+                exc,
             )
-            if not_found and self._database_id == "(default)":
-                logger.warning(
-                    "Firestore database %s missing; attempting to create it",
-                    self._database_id,
-                )
-                self._ensure_firestore_database_exists(project_id)
-                self._firestore_client = google_firestore.Client(
-                    project=project_id,
-                    credentials=self._google_credentials,
-                    database=self._database_id,
-                )
-            else:
-                logger.error(
-                    "Unable to initialize Firestore client for database %s: %s",
-                    self._database_id,
-                    exc,
-                )
-                raise
+            raise
         prefix = self._collection_prefix
         self._faces_collection = self._firestore_client.collection(f"{prefix}faces")
         self._profiles_collection = self._firestore_client.collection(
@@ -214,55 +529,6 @@ class FaceDatabase:
         creds, inferred_project = google.auth.default(scopes=scopes)
         return creds, inferred_project
 
-    def _ensure_firestore_database_exists(self, project_id: str) -> None:
-        """Create the default Firestore database if it does not exist."""
-
-        if firestore_admin_v1 is None:
-            raise RuntimeError(
-                "google-cloud-firestore-admin is required to auto-create Firestore databases"
-            )
-        if google is None:
-            raise RuntimeError(
-                "google-auth is required to auto-create Firestore databases"
-            )
-        if google_exceptions is None:
-            raise RuntimeError(
-                "google-api-core is required to detect Firestore provisioning errors"
-            )
-
-        logger.info(
-            "Ensuring Firestore database %s (%s) exists", self._database_id, project_id
-        )
-        scopes = ["https://www.googleapis.com/auth/datastore"]
-        if self._google_credentials is None:
-            credentials_to_use, _ = google.auth.default(scopes=scopes)
-        else:
-            credentials_to_use = self._google_credentials
-
-        client = firestore_admin_v1.FirestoreAdminClient(credentials=credentials_to_use)
-        parent = f"projects/{project_id}"
-        database_path = f"{parent}/databases/{self._database_id}"
-
-        try:
-            existing = client.get_database(name=database_path)
-            if existing:
-                logger.info("Firestore database %s already exists", database_path)
-                return
-        except google_exceptions.NotFound:
-            pass
-
-        database = firestore_admin_v1.Database(
-            name=database_path,
-            location_id=self._firestore_location,
-            type_=firestore_admin_v1.Database.DatabaseType.FIRESTORE_NATIVE,
-        )
-        operation = client.create_database(
-            parent=parent, database=database, database_id=self._database_id
-        )
-        logger.info("Waiting for Firestore database creation operation to finish...")
-        operation.result(timeout=120)
-        logger.info("Firestore database %s created", database_path)
-
     def _firestore_face_from_snapshot(self, snapshot) -> Dict[str, Any]:
         data = snapshot.to_dict() or {}
         data.setdefault("id", snapshot.id)
@@ -279,6 +545,40 @@ class FaceDatabase:
             query = query.where("username", "==", username)
         return (self._firestore_face_from_snapshot(doc) for doc in query.stream())
 
+    def _write_document_with_retry(
+        self,
+        doc_ref,
+        payload: Dict[str, Any],
+        merge: bool = False,
+        retries: int = 3,
+        delay: float = 1.0,
+    ) -> bool:
+        """Best-effort helper to persist a document with simple backoff."""
+        last_error: Optional[Exception] = None
+        for attempt in range(1, retries + 1):
+            try:
+                doc_ref.set(payload, merge=merge)
+                return True
+            except Exception as exc:  # pragma: no cover - network dependent
+                last_error = exc
+                logger.warning(
+                    "Attempt %s/%s failed writing Firestore document %s: %s",
+                    attempt,
+                    retries,
+                    getattr(doc_ref, "id", "<unknown>"),
+                    exc,
+                )
+                if attempt < retries:
+                    time.sleep(delay)
+
+        logger.error(
+            "Failed writing Firestore document %s after %s attempts: %s",
+            getattr(doc_ref, "id", "<unknown>"),
+            retries,
+            last_error,
+        )
+        return False
+
     def _write_profile_metadata(
         self, username: str, profile_vector: Optional[np.ndarray], count: int
     ) -> None:
@@ -289,7 +589,9 @@ class FaceDatabase:
             }
             if profile_vector is not None:
                 payload["profile_embedding"] = profile_vector.tolist()
-            self._profiles_collection.document(username).set(payload, merge=True)
+            doc_ref = self._profiles_collection.document(username)
+            if not self._write_document_with_retry(doc_ref, payload, merge=True):
+                logger.error("Failed to update profile metadata for %s", username)
         else:
             self.data.setdefault("metadata", {})
             meta = self.data["metadata"].setdefault(username, {})
@@ -385,7 +687,8 @@ class FaceDatabase:
             if self.use_firestore:
                 doc_ref = self._faces_collection.document()
                 face_record["id"] = doc_ref.id
-                doc_ref.set(face_record)
+                if not self._write_document_with_retry(doc_ref, face_record):
+                    return False
                 # Refresh centroid/profile cache for this user
                 self.get_profile_embedding_for_username(username, force_refresh=True)
                 logger.info(
