@@ -54,10 +54,9 @@ class FacePipeline:
 
     def _prepare_image(self, image: np.ndarray, enhance: bool = True) -> np.ndarray:
         """Resize/enhance images to maximize embedding quality."""
-        image = ImageProcessor.resize_image(image)
         if enhance:
-            image = ImageProcessor.enhance_image(image)
-        return image
+            return ImageProcessor.prepare_input_image(image)
+        return ImageProcessor.resize_image(image)
 
     def _run_enrichment(
         self, image: np.ndarray, source: str, threshold: Optional[float], top_k: int

@@ -15,11 +15,6 @@ except ImportError:  # pragma: no cover - optional dependency
     firestore_admin_v1 = None
     firestore_admin_types = None
 
-try:  # Firestore data client (required in Firestore mode)
-    from google.cloud import firestore as google_firestore  # type: ignore
-except ImportError:  # pragma: no cover - optional dependency
-    google_firestore = None
-
 try:  # Google auth helpers for admin operations
     import google.auth  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
@@ -97,56 +92,43 @@ class RestDocumentSnapshot:
         self.id = name.split("/")[-1]
         self._fields = fields or {}
 
+    @staticmethod
+    def _decode_firestore_value(value: Dict[str, Any]):
+        if value is None:
+            return None
+        if "nullValue" in value:
+            return None
+        if "booleanValue" in value:
+            return bool(value["booleanValue"])
+        if "integerValue" in value:
+            try:
+                return int(value["integerValue"])
+            except Exception:
+                return value["integerValue"]
+        if "doubleValue" in value:
+            return float(value["doubleValue"])
+        if "timestampValue" in value:
+            return value["timestampValue"]
+        if "stringValue" in value:
+            return value["stringValue"]
+        if "referenceValue" in value:
+            return value["referenceValue"]
+        if "arrayValue" in value:
+            arr = value.get("arrayValue", {}).get("values", [])
+            return [RestDocumentSnapshot._decode_firestore_value(item) for item in arr]
+        if "mapValue" in value:
+            nested_fields = value.get("mapValue", {}).get("fields", {})
+            return {
+                key: RestDocumentSnapshot._decode_firestore_value(val)
+                for key, val in nested_fields.items()
+            }
+        # Unknown type; return as-is for debugging
+        return value
+
     def to_dict(self) -> dict:
-        # Firestore REST returns typed fields. Convert simple number/string/array types
         result = {}
         for k, v in self._fields.items():
-            # Try to unwrap common field types
-            if "stringValue" in v:
-                result[k] = v["stringValue"]
-            elif "doubleValue" in v:
-                result[k] = float(v["doubleValue"])
-            elif "integerValue" in v:
-                try:
-                    result[k] = int(v["integerValue"])
-                except Exception:
-                    result[k] = v["integerValue"]
-            elif "arrayValue" in v and "values" in v["arrayValue"]:
-                # untyped arrays: map values recursively for simple primitives
-                arr = []
-                for item in v["arrayValue"]["values"]:
-                    if "doubleValue" in item:
-                        arr.append(float(item["doubleValue"]))
-                    elif "integerValue" in item:
-                        try:
-                            arr.append(int(item["integerValue"]))
-                        except Exception:
-                            arr.append(item["integerValue"])
-                    elif "stringValue" in item:
-                        arr.append(item["stringValue"])
-                    else:
-                        # fallback to raw representation
-                        arr.append(item)
-                result[k] = arr
-            elif "mapValue" in v and "fields" in v["mapValue"]:
-                # nested map: simple recursive conversion
-                nested = {}
-                for nk, nv in v["mapValue"]["fields"].items():
-                    if "stringValue" in nv:
-                        nested[nk] = nv["stringValue"]
-                    elif "doubleValue" in nv:
-                        nested[nk] = float(nv["doubleValue"])
-                    elif "integerValue" in nv:
-                        try:
-                            nested[nk] = int(nv["integerValue"])
-                        except Exception:
-                            nested[nk] = nv["integerValue"]
-                    else:
-                        nested[nk] = nv
-                result[k] = nested
-            else:
-                # unknown typed field: put raw
-                result[k] = v
+            result[k] = self._decode_firestore_value(v)
         return result
 
 
@@ -236,10 +218,20 @@ class RestBatch:
 
 
 class RestFirestoreClient:
-    def __init__(self, project: str, credentials=None):
+    def __init__(
+        self,
+        project: str,
+        database: str = "(default)",
+        location_id: Optional[str] = None,
+        credentials=None,
+    ):
         self.project = project
+        self._database = database or "(default)"
+        self._location_id = location_id or "us-central"
         self._creds = credentials
-        self._base = f"https://firestore.googleapis.com/v1/projects/{project}/databases/(default)/documents"
+        self._api_root = "https://firestore.googleapis.com/v1"
+        self._database_path = f"projects/{project}/databases/{self._database}"
+        self._documents_base = f"{self._api_root}/{self._database_path}/documents"
 
     def collection(self, name: str):
         return RestCollection(self, name)
@@ -252,8 +244,66 @@ class RestFirestoreClient:
         token = _get_bearer_token_from_credentials(self._creds)
         return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
+    def database_exists(self) -> bool:
+        url = f"{self._api_root}/{self._database_path}"
+        resp = requests.get(url, headers=self._auth_headers())
+        if resp.status_code == 404:
+            return False
+        if resp.status_code == 403:
+            logger.warning(
+                "Insufficient permission to verify Firestore database %s; assuming it exists.",
+                self._database,
+            )
+            return True
+        resp.raise_for_status()
+        return True
+
+    def ensure_database(self) -> bool:
+        if self.database_exists():
+            return False
+        self._create_database()
+        return True
+
+    def _create_database(self) -> None:
+        url = f"{self._api_root}/projects/{self.project}/databases"
+        params = {"databaseId": self._database}
+        body = {
+            "type": "FIRESTORE_NATIVE",
+            "locationId": self._location_id,
+        }
+        resp = requests.post(
+            url, headers=self._auth_headers(), params=params, json=body
+        )
+        if resp.status_code == 409:
+            return
+        if resp.status_code == 403:
+            raise PermissionError(
+                "Permission denied while attempting to create Firestore database."
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        operation_name = data.get("name")
+        if operation_name:
+            self._wait_for_operation(operation_name)
+
+    def _wait_for_operation(self, operation_name: str, timeout: int = 120) -> None:
+        deadline = time.time() + timeout
+        url = f"{self._api_root}/{operation_name}"
+        while time.time() < deadline:
+            resp = requests.get(url, headers=self._auth_headers())
+            resp.raise_for_status()
+            payload = resp.json()
+            if payload.get("done"):
+                if "error" in payload:
+                    raise RuntimeError(
+                        f"Firestore admin operation failed: {payload['error']}"
+                    )
+                return
+            time.sleep(2)
+        raise TimeoutError("Timed out waiting for Firestore admin operation to finish")
+
     def list_documents(self, collection_path: str):
-        url = f"{self._base}/{collection_path}"
+        url = f"{self._documents_base}/{collection_path}"
         resp = requests.get(url, headers=self._auth_headers())
         if resp.status_code == 404:
             return []
@@ -266,7 +316,7 @@ class RestFirestoreClient:
             yield RestDocumentSnapshot(name, fields)
 
     def get_document(self, collection_path: str, doc_id: str):
-        url = f"{self._base}/{collection_path}/{doc_id}"
+        url = f"{self._documents_base}/{collection_path}/{doc_id}"
         resp = requests.get(url, headers=self._auth_headers())
         if resp.status_code == 404:
             return None
@@ -313,18 +363,18 @@ class RestFirestoreClient:
 
         if merge:
             # Merges must target an existing document
-            url = f"{self._base}/{collection_path}/{doc_id}"
+            url = f"{self._documents_base}/{collection_path}/{doc_id}"
             resp = requests.patch(url, headers=self._auth_headers(), json=body)
         else:
             # Firestore REST API requires POST for creating documents with custom IDs
-            url = f"{self._base}/{collection_path}"
+            url = f"{self._documents_base}/{collection_path}"
             params = {"documentId": doc_id}
             resp = requests.post(
                 url, headers=self._auth_headers(), params=params, json=body
             )
             if resp.status_code == 409:
                 # Document already exists, fall back to patch/overwrite
-                url = f"{self._base}/{collection_path}/{doc_id}"
+                url = f"{self._documents_base}/{collection_path}/{doc_id}"
                 resp = requests.patch(url, headers=self._auth_headers(), json=body)
 
         if resp.status_code in (200, 201):
@@ -334,7 +384,7 @@ class RestFirestoreClient:
         return True
 
     def delete_document(self, collection_path: str, doc_id: str):
-        url = f"{self._base}/{collection_path}/{doc_id}"
+        url = f"{self._documents_base}/{collection_path}/{doc_id}"
         resp = requests.delete(url, headers=self._auth_headers())
         if resp.status_code in (200, 204):
             return True
@@ -405,9 +455,12 @@ class FaceDatabase:
         self._database_id = (
             getattr(config, "FIRESTORE_DATABASE_ID", "(default)") or "(default)"
         ).strip()
-        # self._firestore_location = getattr(
-        #     config, "FIRESTORE_LOCATION_ID", "us-central"
-        # )
+        self._firestore_location = getattr(
+            config, "FIRESTORE_LOCATION_ID", "us-central"
+        ).strip()
+        self._ensure_firestore_database = getattr(
+            config, "FIRESTORE_ENSURE_DATABASE", False
+        )
         self._google_credentials = None
 
         if self.use_firestore:
@@ -479,11 +532,6 @@ class FaceDatabase:
     # Firestore helpers
     # ------------------------------------------------------------------
     def _init_firestore(self) -> None:
-        if google_firestore is None:
-            raise RuntimeError(
-                "google-cloud-firestore is required for Firestore mode. Install it and set DB_TYPE=firestore."
-            )
-
         project_id = self._project_id_override or getattr(
             config, "FIREBASE_PROJECT_ID", None
         )
@@ -496,10 +544,18 @@ class FaceDatabase:
                 "FIREBASE_PROJECT_ID must be set (or derivable from credentials) to use Firestore"
             )
 
+        self._database_id, inferred_location = self._select_firestore_database(
+            project_id, self._database_id, self._firestore_location
+        )
+        if inferred_location:
+            self._firestore_location = inferred_location
+
         try:
-            # Use REST-based Firestore client (works on Firebase Spark plan)
             self._firestore_client = RestFirestoreClient(
-                project_id, credentials=self._google_credentials
+                project_id,
+                database=self._database_id,
+                location_id=self._firestore_location,
+                credentials=self._google_credentials,
             )
         except Exception as exc:
             logger.error(
@@ -507,6 +563,21 @@ class FaceDatabase:
                 exc,
             )
             raise
+        if self._ensure_firestore_database:
+            try:
+                created = self._firestore_client.ensure_database()
+                if created:
+                    logger.info(
+                        "Provisioned Firestore database %s for project %s",
+                        self._database_id,
+                        project_id,
+                    )
+            except PermissionError as exc:
+                raise RuntimeError(
+                    "Firestore database %s does not exist and could not be created automatically. "
+                    "Visit https://console.cloud.google.com/datastore/setup?project=%s to create a Firestore database (Native mode) before running in Firestore mode, or set FIRESTORE_ENSURE_DATABASE=false to skip auto-provisioning."
+                    % (self._database_id, project_id)
+                ) from exc
         prefix = self._collection_prefix
         self._faces_collection = self._firestore_client.collection(f"{prefix}faces")
         self._profiles_collection = self._firestore_client.collection(
@@ -514,7 +585,10 @@ class FaceDatabase:
         )
 
     def _resolve_firestore_credentials(self) -> Tuple[Any, Optional[str]]:
-        scopes = ["https://www.googleapis.com/auth/datastore"]
+        scopes = [
+            "https://www.googleapis.com/auth/datastore",
+            "https://www.googleapis.com/auth/cloud-platform",
+        ]
 
         firebase_config = config.load_firebase_config()
         if firebase_config and service_account is not None:
@@ -541,6 +615,67 @@ class FaceDatabase:
 
         creds, inferred_project = google.auth.default(scopes=scopes)
         return creds, inferred_project
+
+    def _select_firestore_database(
+        self, project_id: str, desired_db: str, default_location: str
+    ) -> Tuple[str, Optional[str]]:
+        desired = (desired_db or "(default)").strip()
+        try:
+            databases = self._list_firestore_databases(project_id)
+        except PermissionError:
+            logger.warning(
+                "Firestore credentials lack permission to list databases; defaulting to %s",
+                desired,
+            )
+            return desired, default_location
+        except Exception as exc:
+            logger.warning(
+                "Unable to inspect Firestore databases for project %s: %s",
+                project_id,
+                exc,
+            )
+            return desired, default_location
+
+        if not databases:
+            return desired, default_location
+
+        def _parse(entry: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+            name = entry.get("name", "")
+            db_id = name.split("/")[-1] if name else ""
+            return db_id, entry.get("locationId")
+
+        parsed = [_parse(entry) for entry in databases]
+
+        # First try exact match on desired id
+        for db_id, location in parsed:
+            if db_id == desired:
+                return db_id, location or default_location
+
+        # Fall back to known defaults
+        for fallback in ("default", "(default)"):
+            for db_id, location in parsed:
+                if db_id == fallback:
+                    return db_id, location or default_location
+
+        # Otherwise pick the first available database
+        db_id, location = parsed[0]
+        logger.warning(
+            "Using Firestore database %s for project %s (requested %s not found)",
+            db_id,
+            project_id,
+            desired,
+        )
+        return db_id or desired, location or default_location
+
+    def _list_firestore_databases(self, project_id: str) -> List[Dict[str, Any]]:
+        token = _get_bearer_token_from_credentials(self._google_credentials)
+        url = f"https://firestore.googleapis.com/v1/projects/{project_id}/databases"
+        resp = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+        if resp.status_code == 403:
+            raise PermissionError("Insufficient permission to list Firestore databases")
+        resp.raise_for_status()
+        payload = resp.json()
+        return payload.get("databases", [])
 
     def _firestore_face_from_snapshot(self, snapshot) -> Dict[str, Any]:
         data = snapshot.to_dict() or {}

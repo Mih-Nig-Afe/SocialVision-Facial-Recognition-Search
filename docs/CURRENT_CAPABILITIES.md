@@ -9,6 +9,7 @@
 ## Snapshot
 
 - **Dual Embedding Bundles:** Every detected face stores DeepFace (Facenet512) + dlib encodings, normalized, weighted, and persisted for deterministic scoring.
+- **High-Detail Preprocessing:** Uploads are auto-upscaled via Real-ESRGAN (fallback to OpenCV SR) before detection so embeddings originate from crisp imagery even when originals are noisy.
 - **Search Pathways:** Rank results per face, aggregate matches by username, enrich identities by appending fresh embeddings post-match.
 - **Operational Tooling:** Streamlit tri-tab UI, Docker build with pip cache mount, DeepFace weight prefetch, JSON database auto-versioning.
 - **Quality Baseline:** Pytest suites cover engine/database/search; Streamlit workflows rely on the same API contracts.
@@ -24,6 +25,7 @@
 | Local database | ✅ | Stores bundles + primary vectors + metadata. |
 | Similarity search | ✅ | Weighted cosine similarity; profile centroids per username. |
 | Streamlit UI | ✅ | Search / Add / Analytics tabs with live metrics. |
+| Image upscaling | ✅ | Real-ESRGAN super-resolution with OpenCV fallback and bicubic safety net. |
 | Batch processing | ✅ | `FaceRecognitionEngine.batch_process_images` for offline ingestion. |
 | Dockerized runtime | ✅ | BuildKit cache for TensorFlow, DeepFace weight caching, health checks. |
 | Testing | ✅ | `tests/` suites covering engine, DB, search flows. |
@@ -119,6 +121,7 @@ Manual smoke tests:
 - `DEEPFACE_EMBEDDING_WEIGHT` / `DLIB_EMBEDDING_WEIGHT` tune how similarity scores blend.
 - `LOCAL_DB_PATH` switches JSON storage (default `data/faces_database.json`).
 - `FACE_SIMILARITY_THRESHOLD` globally affects Search + Enrichment.
+- `IMAGE_UPSCALING_ENABLED` keeps the new super-resolution stage active (default `true`).
 
 See `src/config.py` for the full catalog.
 

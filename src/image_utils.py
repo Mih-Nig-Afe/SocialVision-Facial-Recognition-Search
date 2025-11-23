@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 from src.logger import setup_logger
 from src.config import get_config
+from src.image_upscaler import get_image_upscaler
 
 logger = setup_logger(__name__)
 config = get_config()
@@ -127,37 +128,106 @@ class ImageProcessor:
             return image
 
     @staticmethod
+    def prepare_input_image(
+        image: np.ndarray,
+        max_width: int = 1400,
+        max_height: int = 1400,
+    ) -> np.ndarray:
+        """Resize image before sending to recognition pipeline."""
+        enhanced = ImageProcessor.enhance_image(image)
+        return ImageProcessor.resize_image(enhanced, max_width, max_height)
+
+    @staticmethod
     def enhance_image(image: np.ndarray) -> np.ndarray:
-        """
-        Enhance image for better face detection
+        """Run the configured super-resolution backend before downstream processing."""
 
-        Args:
-            image: Input image
-
-        Returns:
-            Enhanced image
-        """
         try:
-            if not HAS_CV2:
-                logger.warning("cv2 not available, skipping image enhancement")
-                return image
+            upscaler = get_image_upscaler()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.error("Unable to initialize image upscaler: %s", exc)
+            return image
 
-            # Convert to LAB color space
-            lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-            l, a, b = cv2.split(lab)
+        try:
+            return upscaler.upscale(image)
+        except Exception as exc:
+            logger.error("Image upscaling failed: %s", exc)
+            return image
 
-            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-            l = clahe.apply(l)
+    @staticmethod
+    def frame_image_for_display(
+        image: np.ndarray,
+        frame_size: Tuple[int, int] = (520, 520),
+        padding: int = 18,
+        background_color: Tuple[int, int, int] = (12, 12, 12),
+        border_color: Tuple[int, int, int] = (80, 80, 80),
+    ) -> np.ndarray:
+        """Place an image inside a fixed-size frame for consistent UI presentation."""
 
-            # Merge channels
-            enhanced = cv2.merge([l, a, b])
-            enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+        try:
+            target_w, target_h = frame_size
+            target_w = max(target_w, 10)
+            target_h = max(target_h, 10)
+            pad_w = max(target_w - 2 * padding, 1)
+            pad_h = max(target_h - 2 * padding, 1)
 
-            logger.info("Image enhanced")
-            return enhanced
-        except Exception as e:
-            logger.error(f"Error enhancing image: {e}")
+            height, width = image.shape[:2]
+            scale = min(pad_w / width, pad_h / height, 1.0)
+            new_w = max(int(width * scale), 1)
+            new_h = max(int(height * scale), 1)
+
+            if HAS_CV2:
+                resized = cv2.resize(
+                    image, (new_w, new_h), interpolation=cv2.INTER_AREA
+                )
+            else:
+                pil_image = Image.fromarray(image[:, :, ::-1])  # BGR to RGB
+                pil_image = pil_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                resized = np.array(pil_image)[:, :, ::-1]
+
+            frame = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+            frame[:] = background_color
+
+            top = (target_h - new_h) // 2
+            left = (target_w - new_w) // 2
+            frame[top : top + new_h, left : left + new_w] = resized
+
+            if HAS_CV2:
+                cv2.rectangle(
+                    frame,
+                    (left - 4 if left - 4 > 0 else 0, top - 4 if top - 4 > 0 else 0),
+                    (
+                        (
+                            left + new_w + 4
+                            if left + new_w + 4 < target_w
+                            else target_w - 1
+                        ),
+                        top + new_h + 4 if top + new_h + 4 < target_h else target_h - 1,
+                    ),
+                    border_color,
+                    1,
+                )
+            else:
+                pil_frame = Image.fromarray(frame[:, :, ::-1])
+                draw = ImageDraw.Draw(pil_frame)
+                draw.rectangle(
+                    [
+                        left - 4 if left - 4 > 0 else 0,
+                        top - 4 if top - 4 > 0 else 0,
+                        (
+                            left + new_w + 4
+                            if left + new_w + 4 < target_w
+                            else target_w - 1
+                        ),
+                        top + new_h + 4 if top + new_h + 4 < target_h else target_h - 1,
+                    ],
+                    outline=border_color,
+                    width=2,
+                )
+                frame = np.array(pil_frame)[:, :, ::-1]
+
+            return frame
+        except Exception as exc:
+            logger.error(f"Error framing image for display: {exc}")
             return image
 
     @staticmethod

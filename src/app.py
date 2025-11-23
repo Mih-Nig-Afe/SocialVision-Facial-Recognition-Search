@@ -6,6 +6,7 @@ Main Streamlit Application
 import streamlit as st
 from pathlib import Path
 import tempfile
+import numpy as np
 from src.config import get_config
 from src.logger import setup_logger
 from src.face_recognition_engine import FaceRecognitionEngine
@@ -49,6 +50,10 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+DISPLAY_FRAME = (520, 520)
+FACE_TILE_FRAME = (240, 240)
 
 
 @st.cache_resource
@@ -129,19 +134,31 @@ def main():
 
                 try:
                     # Load and process image
-                    image = ImageProcessor.load_image(tmp_path)
-                    if image is None:
+                    raw_image = ImageProcessor.load_image(tmp_path)
+                    if raw_image is None:
                         st.error("Failed to load image")
                     else:
+                        processed_image = ImageProcessor.prepare_input_image(raw_image)
+                        framed_preview = ImageProcessor.frame_image_for_display(
+                            processed_image, frame_size=DISPLAY_FRAME
+                        )
+
                         # Display uploaded image
                         st.subheader("Uploaded Image")
-                        st.image(image, channels="BGR", use_column_width=True)
+                        st.image(
+                            framed_preview,
+                            channels="BGR",
+                            use_column_width=False,
+                            caption="Enhanced preview (auto-resized)",
+                        )
 
                         # Perform search
                         st.subheader("Search Results")
                         try:
                             results = search_engine.search_by_image(
-                                image, threshold=similarity_threshold, top_k=top_k
+                                processed_image,
+                                threshold=similarity_threshold,
+                                top_k=top_k,
                             )
                         except Exception as search_error:
                             st.error(f"Error during search: {search_error}")
@@ -223,12 +240,27 @@ def main():
 
                     try:
                         # Load image
-                        image = ImageProcessor.load_image(tmp_path)
-                        if image is None:
+                        raw_image = ImageProcessor.load_image(tmp_path)
+                        if raw_image is None:
                             st.error("Failed to load image")
                         else:
+                            processed_image = ImageProcessor.prepare_input_image(
+                                raw_image
+                            )
+                            framed_preview = ImageProcessor.frame_image_for_display(
+                                processed_image, frame_size=DISPLAY_FRAME
+                            )
+
                             face_engine = FaceRecognitionEngine(database=db)
-                            face_locations = face_engine.detect_faces(image)
+                            face_locations = face_engine.detect_faces(processed_image)
+
+                            st.subheader("Enhanced Preview")
+                            st.image(
+                                framed_preview,
+                                channels="BGR",
+                                use_column_width=False,
+                                caption="Auto-enhanced input",
+                            )
 
                             if not face_locations:
                                 st.warning("No faces detected in image")
@@ -237,30 +269,40 @@ def main():
                                     f"Detected {len(face_locations)} face(s). Extracting embeddings..."
                                 )
                                 face_chips = face_engine.extract_face_chips(
-                                    image, face_locations
+                                    processed_image, face_locations
                                 )
 
                                 if face_chips:
                                     st.subheader("Detected Faces")
                                     cols = st.columns(min(3, len(face_chips)))
                                     for idx, chip in enumerate(face_chips):
+                                        display_chip = chip
                                         if chip.ndim == 2:
-                                            rgb_chip = chip
-                                        elif HAS_CV2:
-                                            rgb_chip = cv2.cvtColor(
-                                                chip, cv2.COLOR_BGR2RGB
+                                            if HAS_CV2:
+                                                display_chip = cv2.cvtColor(
+                                                    chip, cv2.COLOR_GRAY2BGR
+                                                )
+                                            else:
+                                                display_chip = np.stack(
+                                                    [chip] * 3, axis=-1
+                                                )
+                                        framed_chip = (
+                                            ImageProcessor.frame_image_for_display(
+                                                display_chip,
+                                                frame_size=FACE_TILE_FRAME,
+                                                padding=12,
                                             )
-                                        else:
-                                            rgb_chip = chip[:, :, ::-1]
+                                        )
                                         cols[idx % len(cols)].image(
-                                            rgb_chip,
+                                            framed_chip,
                                             caption=f"Face {idx + 1}",
-                                            use_column_width=True,
+                                            channels="BGR",
+                                            use_column_width=False,
                                         )
 
                                 summary = face_engine.process_and_add_face(
                                     username=username,
-                                    image=image,
+                                    image=processed_image,
                                     source=source,
                                     metadata={
                                         "origin": "streamlit_add_faces",

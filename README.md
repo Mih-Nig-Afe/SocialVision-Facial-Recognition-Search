@@ -32,6 +32,7 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 |------|------------|
 | **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, automatic fallbacks if TensorFlow is unavailable. |
 | **Face Search Engine** | Detection, embedding, cosine similarity search, identity aggregation, configurable thresholds, enrichment workflows that continuously learn from matches. |
+| **High-Fidelity Preprocessing** | Every upload is first enhanced with Real-ESRGAN super-resolution (fallback to OpenCV SR) so embeddings always originate from the sharpest possible face crop. |
 | **Streamlit Command Center** | Tabs for Search, Add Faces, Analytics; live metrics, threshold sliders, and enrichment summaries meant for operator demos. |
 | **Data Layer** | Local JSON store for offline demos **or** Firestore mode for centralized persistence, per-face metadata, cached profile centroids per username, normalized bundles for deterministic math. |
 | **Operations** | Docker image with BuildKit pip caching (no repeated TensorFlow wheel downloads), DeepFace weight prefetch, CLI demo script, logging + health checks. |
@@ -152,6 +153,8 @@ Key environment variables (see `src/config.py` for defaults):
 | `ENABLE_DUAL_EMBEDDINGS` | `true` to run DeepFace + dlib together (default `true`). |
 | `DEEPFACE_EMBEDDING_WEIGHT` / `DLIB_EMBEDDING_WEIGHT` | Similarity weights applied during search. |
 | `FACE_SIMILARITY_THRESHOLD` | Global cosine similarity cut-off. |
+| `IMAGE_UPSCALING_ENABLED` | Enables automatic Real-ESRGAN/OpenCV super-resolution before detection (default `true`). |
+| `IMAGE_UPSCALING_BACKEND` / `IMAGE_UPSCALING_TARGET_SCALE` | Choose the SR model (e.g. `realesrgan_x4plus`) and preferred out-scale for the enhanced frames. |
 | `LOCAL_DB_PATH` | Path to JSON database (default `data/faces_database.json`). |
 | `DB_TYPE` | `local` (JSON) or `firestore`; controls which backend `FaceDatabase` instantiates. |
 | `FIRESTORE_DATABASE_ID` | Firestore database ID (default `(default)`). |

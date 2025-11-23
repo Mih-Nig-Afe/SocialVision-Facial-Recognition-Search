@@ -742,23 +742,23 @@ class FaceRecognitionEngine:
             logger.error("process_and_add_face requires a FaceDatabase instance")
             return summary if return_summary else False
 
+        try:
+            from src.image_utils import ImageProcessor
+        except Exception as exc:  # pragma: no cover - defensive
+            summary["errors"].append(str(exc))
+            return summary if return_summary else False
+
         working_image = image
         if working_image is None:
             if not image_path:
                 summary["errors"].append("image or image_path required")
                 return summary if return_summary else False
 
-            try:
-                from src.image_utils import ImageProcessor
-
-                working_image = ImageProcessor.load_image(image_path)
-            except Exception as exc:  # pragma: no cover - import/runtime dependent
-                summary["errors"].append(str(exc))
-                return summary if return_summary else False
-
+            working_image = ImageProcessor.load_image(image_path)
             if working_image is None:
                 summary["errors"].append(f"Failed to load image from {image_path}")
                 return summary if return_summary else False
+        working_image = ImageProcessor.prepare_input_image(working_image)
 
         face_locations = self.detect_faces(working_image)
         summary["faces_detected"] = len(face_locations)
@@ -823,6 +823,8 @@ class FaceRecognitionEngine:
             if image is None:
                 logger.error(f"Failed to read image: {image_path}")
                 return None, []
+
+            image = ImageProcessor.prepare_input_image(image)
 
             # Detect faces
             face_locations = self.detect_faces(image)

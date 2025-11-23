@@ -43,6 +43,9 @@ class Config:
     )
     FIRESTORE_DATABASE_ID = os.getenv("FIRESTORE_DATABASE_ID", "(default)")
     FIRESTORE_LOCATION_ID = os.getenv("FIRESTORE_LOCATION_ID", "us-central")
+    FIRESTORE_ENSURE_DATABASE = (
+        os.getenv("FIRESTORE_ENSURE_DATABASE", "False").lower() == "true"
+    )
 
     # Face Recognition settings
     FACE_RECOGNITION_MODEL = "hog"  # "hog" or "cnn" (cnn is more accurate but slower)
@@ -64,6 +67,20 @@ class Config:
     MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", "10485760"))  # 10MB
     ALLOWED_IMAGE_FORMATS = {"jpg", "jpeg", "png", "gif", "bmp", "webp"}
     IMAGE_QUALITY = int(os.getenv("IMAGE_QUALITY", "85"))
+    IMAGE_UPSCALING_ENABLED = (
+        os.getenv("IMAGE_UPSCALING_ENABLED", "True").lower() == "true"
+    )
+    IMAGE_UPSCALING_BACKEND = os.getenv("IMAGE_UPSCALING_BACKEND", "realesrgan_x4plus")
+    IMAGE_UPSCALING_TARGET_SCALE = float(
+        os.getenv("IMAGE_UPSCALING_TARGET_SCALE", "2.0")
+    )
+    IMAGE_UPSCALING_MIN_EDGE = int(os.getenv("IMAGE_UPSCALING_MIN_EDGE", "512"))
+    IMAGE_UPSCALING_MAX_EDGE = int(os.getenv("IMAGE_UPSCALING_MAX_EDGE", "2048"))
+    IMAGE_UPSCALING_TILE = int(os.getenv("IMAGE_UPSCALING_TILE", "0"))
+    IMAGE_UPSCALING_TILE_PAD = int(os.getenv("IMAGE_UPSCALING_TILE_PAD", "10"))
+    IMAGE_UPSCALING_HALF_PRECISION = (
+        os.getenv("IMAGE_UPSCALING_HALF_PRECISION", "False").lower() == "true"
+    )
 
     # Search settings
     MAX_RESULTS = int(os.getenv("MAX_RESULTS", "50"))
@@ -132,6 +149,7 @@ class TestingConfig(Config):
     DEBUG = True
     DB_TYPE = "local"
     LOCAL_DB_PATH = str(Config.DATA_DIR / "test_faces_database.json")
+    IMAGE_UPSCALING_ENABLED = False
 
 
 def get_config() -> Config:
