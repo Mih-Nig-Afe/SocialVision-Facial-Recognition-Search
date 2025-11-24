@@ -148,7 +148,10 @@ class ImageProcessor:
             return image
 
         try:
-            return upscaler.upscale(image)
+            enhanced = upscaler.upscale(image)
+            backend = getattr(upscaler, "last_backend", "unknown")
+            logger.info("Image enhanced via %s backend", backend)
+            return enhanced
         except Exception as exc:
             logger.error("Image upscaling failed: %s", exc)
             return image

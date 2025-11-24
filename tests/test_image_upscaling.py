@@ -69,6 +69,7 @@ def test_image_upscaler_prefers_ibm_max_backend(monkeypatch):
     result = upscaler.upscale(sample)
 
     assert np.all(result == 5)
+    assert upscaler.last_backend == "ibm_max"
 
 
 def test_image_upscaler_uses_ncnn_when_ibm_disabled(monkeypatch):
@@ -97,3 +98,4 @@ def test_image_upscaler_uses_ncnn_when_ibm_disabled(monkeypatch):
     result = upscaler.upscale(sample)
 
     assert np.all(result == 7)
+    assert upscaler.last_backend == "ncnn"

@@ -1,4 +1,20 @@
 services:
+  ibm-max:
+    image: codait/max-image-resolution-enhancer:latest
+    container_name: ibm-max
+    platform: ${IBM_MAX_PLATFORM:-linux/amd64}
+    restart: unless-stopped
+    ports:
+      - "${IBM_MAX_HOST_PORT:-5100}:5000"
+    networks:
+      - socialvision-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/model/metadata"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
   socialvision:
     build:
       context: .
@@ -30,6 +46,9 @@ services:
       - FIRESTORE_DATABASE_ID=(default)
       - FIRESTORE_LOCATION_ID=us-central
       - FIREBASE_CONFIG_PATH=/app/config/firebase_config.json
+      - IBM_MAX_ENABLED=${IBM_MAX_ENABLED:-true}
+      - IBM_MAX_URL=${IBM_MAX_URL:-http://ibm-max:5000}
+      - IBM_MAX_TIMEOUT=${IBM_MAX_TIMEOUT:-180}
     networks:
       - socialvision-network
     restart: unless-stopped

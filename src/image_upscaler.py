@@ -14,6 +14,7 @@ from PIL import Image
 
 from src.config import get_config
 from src.logger import setup_logger
+from src.compat.torchvision_patch import ensure_functional_tensor_shim
 
 logger = setup_logger(__name__)
 config = get_config()
@@ -64,6 +65,8 @@ class MaxAPIUpscaler:
         if self.enabled and not self.base_url:
             logger.warning("IBM MAX upscaling enabled but IBM_MAX_URL is missing")
             self.enabled = False
+        elif self.enabled:
+            logger.info("IBM MAX upscaler enabled (%s)", self.base_url)
 
     def upscale(self, image: np.ndarray) -> Optional[np.ndarray]:
         if not self.enabled:
@@ -213,6 +216,7 @@ class ImageUpscaler:
         self._device = "cpu"
         self._ncnn_client = NCNNUpscaler()
         self._max_client = MaxAPIUpscaler()
+        self._last_backend = "uninitialized"
 
         if self.enabled:
             self._initialize_backends()
@@ -226,6 +230,7 @@ class ImageUpscaler:
         """Upscale an image while preserving detail."""
 
         if not self.enabled or image is None:
+            self._last_backend = "disabled"
             return image
 
         try:
@@ -234,16 +239,19 @@ class ImageUpscaler:
             return image
 
         if max(height, width) >= self.max_edge:
+            self._last_backend = "size_guard"
             return image
 
         outscale = self._compute_outscale(width, height)
         if outscale <= 1.0:
+            self._last_backend = "no_scale"
             return image
 
         if self._max_client.enabled:
             upscaled = self._max_client.upscale(image)
             finalized = self._finalize_resolution(image, upscaled, outscale)
             if finalized is not None:
+                self._last_backend = "ibm_max"
                 logger.info("Upscaled frame via IBM MAX microservice")
                 return finalized
 
@@ -251,6 +259,7 @@ class ImageUpscaler:
             upscaled = self._ncnn_client.upscale(image)
             finalized = self._finalize_resolution(image, upscaled, outscale)
             if finalized is not None:
+                self._last_backend = "ncnn"
                 logger.info("Upscaled frame via Real-ESRGAN NCNN backend")
                 return finalized
 
@@ -258,6 +267,7 @@ class ImageUpscaler:
             upscaled = self._upscale_with_realesrgan(image, outscale)
             finalized = self._finalize_resolution(image, upscaled, outscale)
             if finalized is not None:
+                self._last_backend = "realesrgan"
                 logger.info("Upscaled frame via native Real-ESRGAN backend")
                 return finalized
 
@@ -265,8 +275,10 @@ class ImageUpscaler:
             upscaled = self._upscale_with_opencv(image, outscale)
             finalized = self._finalize_resolution(image, upscaled, outscale)
             if finalized is not None:
+                self._last_backend = "opencv"
                 return finalized
 
+        self._last_backend = "resize"
         return self._fallback_resize(image, outscale)
 
     # ------------------------------------------------------------------
@@ -303,6 +315,7 @@ class ImageUpscaler:
         return self._build_realesrgan(model_config)
 
     def _build_realesrgan(self, model_config: dict) -> bool:
+        ensure_functional_tensor_shim()
         try:
             from realesrgan import RealESRGANer  # type: ignore
             from basicsr.archs.rrdbnet_arch import RRDBNet  # type: ignore
@@ -515,3 +528,7 @@ class ImageUpscaler:
             return Image.fromarray(data)
         except Exception:
             return None
+
+    @property
+    def last_backend(self) -> str:
+        return self._last_backend

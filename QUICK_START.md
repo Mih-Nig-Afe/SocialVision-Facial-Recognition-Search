@@ -63,17 +63,19 @@ docker-compose restart
 docker-compose ps
 ```
 
-### Prefer IBM MAX Upscaling (Optional but Recommended)
+### Prefer IBM MAX Upscaling (Optional Locally, Enabled in Docker)
 
-If you run the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) locally or via Docker, point SocialVision at it so every upload is enhanced by that service before detection:
+`docker-compose up` now starts the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) sidecar (`ibm-max`) automatically and wires `socialvision-app` to it (`IBM_MAX_URL=http://ibm-max:5000`). If `localhost:5000` is already in use, set `IBM_MAX_HOST_PORT` (defaults to `5100`) before running Compose to pick any free port. Apple Silicon hosts should keep `IBM_MAX_PLATFORM=linux/amd64` (the default) so Docker Desktop spins up the x86 image via QEMU; install Rosetta when prompted. For manual/local runs, export the same variables to prefer MAX before the NCNN and native Real-ESRGAN fallbacks:
 
 ```bash
 export IBM_MAX_ENABLED=true
-export IBM_MAX_URL="http://localhost:5000"  # replace with your MAX endpoint
-export IBM_MAX_TIMEOUT=180                    # optional override (seconds)
-```
+export IBM_MAX_URL="http://localhost:5000"
+export IBM_MAX_TIMEOUT=180
+# Optional: override when running the container yourself
+export IBM_MAX_PLATFORM=linux/amd64
 
-When using `docker-compose`, drop the same variables under the `environment:` block for the `app` service. The pipeline will then fall back to the NCNN Real-ESRGAN CLI, native Real-ESRGAN, OpenCV, and finally bicubic resizing if the MAX service is unavailable.
+> **Apple Silicon tip:** The IBM MAX image is Intel-only. If `ibm-max` keeps restarting with `Illegal instruction`, run `docker compose up -d socialvision` (skipping the sidecar) or set `IBM_MAX_ENABLED=false` so the app immediately falls back to the Real-ESRGAN/NCNN backends. You can still point `IBM_MAX_URL` at a remote MAX instance hosted on an x86 VM if you need IBM-grade previews.
+```
 
 ---
 

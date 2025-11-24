@@ -114,8 +114,11 @@ Features of the container image:
 - BuildKit cache mount for pip (`/root/.cache/pip`) so large wheels (TensorFlow, DeepFace) download once.
 - Pre-fetch of DeepFace weights during build, reducing cold-start latency.
 - Health check hitting `/_stcore/health` to signal readiness.
+- Bundled [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) service running as `ibm-max`, with `socialvision-app` wired to call it automatically (`IBM_MAX_URL=http://ibm-max:5000`). Override the exposed host port via `IBM_MAX_HOST_PORT` (defaults to `5100`) if something else already listens on `localhost:5000`, and override the image architecture with `IBM_MAX_PLATFORM` (defaults to `linux/amd64`) when running on Apple Silicon via emulation.
 
 Access the UI at `http://localhost:8501`.
+
+> **Apple Silicon note:** IBM's published MAX image is Intel-only and requires AVX instructions. On M-series Macs the container typically restarts with `Illegal instruction` even under emulation. In that case either (a) set `IBM_MAX_ENABLED=false` and run `docker compose up -d socialvision` to rely on the bundled Real-ESRGAN stack, or (b) point `IBM_MAX_URL` to a remote MAX deployment you control (for example an x86 cloud VM exposing the same API).
 
 ---
 
@@ -159,6 +162,8 @@ Key environment variables (see `src/config.py` for defaults):
 | `IMAGE_UPSCALING_ENABLED` | Enables the multi-backend super-resolution pipeline before detection (default `true`). |
 | `IMAGE_UPSCALING_BACKEND` / `IMAGE_UPSCALING_TARGET_SCALE` | Choose the native Real-ESRGAN model (e.g. `realesrgan_x4plus`) and preferred out-scale for local inference. |
 | `IBM_MAX_ENABLED` / `IBM_MAX_URL` / `IBM_MAX_TIMEOUT` | Toggle the IBM MAX Image Resolution Enhancer client, set its base URL, and override HTTP timeout (defaults: disabled, 120s). |
+| `IBM_MAX_HOST_PORT` | Host-side port that exposes the IBM MAX health/API endpoint (default `5100`); useful when `localhost:5000` is already reserved. |
+| `IBM_MAX_PLATFORM` | Docker platform string passed to the IBM MAX service (default `linux/amd64`); set to `linux/amd64` on Apple Silicon so QEMU emulation runs the upstream image. |
 | `NCNN_UPSCALING_ENABLED` / `NCNN_EXEC_PATH` / `NCNN_MODEL_NAME` | Configure the standalone Real-ESRGAN NCNN Vulkan executable path, model, and tiling so it can act as the next fallback when IBM MAX is unavailable. |
 | `LOCAL_DB_PATH` | Path to JSON database (default `data/faces_database.json`). |
 | `DB_TYPE` | `local` (JSON) or `firestore`; controls which backend `FaceDatabase` instantiates. |

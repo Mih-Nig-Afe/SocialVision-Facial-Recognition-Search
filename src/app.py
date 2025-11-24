@@ -13,6 +13,7 @@ from src.face_recognition_engine import FaceRecognitionEngine
 from src.database import FaceDatabase
 from src.search_engine import SearchEngine
 from src.image_utils import ImageProcessor
+from src.image_upscaler import get_image_upscaler
 
 # Try to import cv2, but make it optional
 try:
@@ -54,6 +55,21 @@ st.markdown(
 
 DISPLAY_FRAME = (520, 520)
 FACE_TILE_FRAME = (240, 240)
+BACKEND_LABELS = {
+    "ibm_max": "IBM MAX SRGAN",
+    "ncnn": "Real-ESRGAN NCNN",
+    "realesrgan": "Real-ESRGAN (PyTorch)",
+    "opencv": "OpenCV EDSR",
+    "resize": "Bicubic Resize",
+    "size_guard": "Size Guard (no-op)",
+    "no_scale": "No Scaling Needed",
+    "disabled": "Upscaling Disabled",
+    "uninitialized": "Upscaler Initializing",
+}
+
+
+def _describe_backend(code: str) -> str:
+    return BACKEND_LABELS.get(code, code or "unknown backend")
 
 
 @st.cache_resource
@@ -139,6 +155,7 @@ def main():
                         st.error("Failed to load image")
                     else:
                         processed_image = ImageProcessor.prepare_input_image(raw_image)
+                        backend_code = get_image_upscaler().last_backend
                         framed_preview = ImageProcessor.frame_image_for_display(
                             processed_image, frame_size=DISPLAY_FRAME
                         )
@@ -149,7 +166,9 @@ def main():
                             framed_preview,
                             channels="BGR",
                             use_column_width=False,
-                            caption="Enhanced preview (auto-resized)",
+                            caption=(
+                                f"Enhanced preview via {_describe_backend(backend_code)}"
+                            ),
                         )
 
                         # Perform search
@@ -247,6 +266,7 @@ def main():
                             processed_image = ImageProcessor.prepare_input_image(
                                 raw_image
                             )
+                            backend_code = get_image_upscaler().last_backend
                             framed_preview = ImageProcessor.frame_image_for_display(
                                 processed_image, frame_size=DISPLAY_FRAME
                             )
@@ -259,7 +279,9 @@ def main():
                                 framed_preview,
                                 channels="BGR",
                                 use_column_width=False,
-                                caption="Auto-enhanced input",
+                                caption=(
+                                    f"Auto-enhanced input via {_describe_backend(backend_code)}"
+                                ),
                             )
 
                             if not face_locations:
