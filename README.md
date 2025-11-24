@@ -32,6 +32,7 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 |------|------------|
 | **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, automatic fallbacks if TensorFlow is unavailable. |
 | **Face Search Engine** | Detection, embedding, cosine similarity search, identity aggregation, configurable thresholds, enrichment workflows that continuously learn from matches. |
+| **Self-Training Profiles** | When a search match clears the confidence threshold the system automatically appends that face’s embeddings back into the person’s profile, expanding per-user dimensions/metadata without manual labeling. |
 | **High-Fidelity Preprocessing** | Every upload is streamed to the IBM MAX Image Resolution Enhancer microservice when available, then falls through NCNN Real-ESRGAN, native Real-ESRGAN, OpenCV SR, and bicubic safety nets so embeddings always originate from the sharpest possible face crop. |
 | **Streamlit Command Center** | Tabs for Search, Add Faces, Analytics; live metrics, threshold sliders, and enrichment summaries meant for operator demos. |
 | **Data Layer** | Local JSON store for offline demos **or** Firestore mode for centralized persistence, per-face metadata, cached profile centroids per username, normalized bundles for deterministic math. |
@@ -67,6 +68,7 @@ FaceRecognitionEngine     FaceDatabase
 
 - **Detection/Embedding**: `FaceRecognitionEngine` first attempts DeepFace (Facenet512) and, based on config, also runs dlib encoders. Embeddings are normalized, bundled, and tagged per backend (`{"deepface": [...], "dlib": [...]}`).
 - **Storage/Search**: `FaceDatabase` stores both the bundle and a primary embedding for backward compatibility, computes weighted cosine similarities, and maintains username centroids for quick identity queries.
+- **Self-Training Loop**: `SearchEngine` serializes the embeddings from every detected face during a search. If the top match surpasses the similarity threshold, `_auto_enrich_identity` writes the new bundle back to the matched username with provenance metadata, effectively “training” that profile using real-world query photos and expanding dimensions such as total embeddings, last-added face ID, and similarity history.
 - **Presentation / Ops**: Streamlit orchestrates searches and enrichment, while Docker provides an isolated runtime with cached pip layers and pre-fetched DeepFace weights.
 
 ---
@@ -120,7 +122,7 @@ Access the UI at `http://localhost:8501`.
 
 ### Streamlit Tabs
 
-1. **🔍 Search** – Upload an image, system detects faces, extracts dual embeddings, and surfaces matches with similarity scores.
+1. **🔍 Search** – Upload an image, system detects faces, extracts dual embeddings, and surfaces matches with similarity scores. When a match exceeds the configured threshold, that same embedding bundle is appended to the matched profile automatically, so the database keeps training itself from real search traffic.
 2. **📤 Add Faces** – Upload faces for specific usernames; the UI now uploads full embedding bundles so the database can blend DeepFace+dlib vectors.
 3. **📈 Analytics** – Watch total faces, unique users, and per-source charts sourced directly from the JSON database.
 

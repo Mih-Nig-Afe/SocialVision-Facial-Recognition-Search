@@ -16,6 +16,7 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 - Docker build uses BuildKit pip caching and pre-fetches DeepFace weights, shrinking rebuilds by ~60%.
 - Upscaling stack now prioritizes IBM MAX → NCNN Real-ESRGAN → native Real-ESRGAN → OpenCV, ensuring every downstream face task runs on enhanced imagery.
 - Documentation overhaul (README + capabilities + status) brings parity with established OSS projects.
+- Auto-enrichment loop takes every confident search match and appends its embeddings back into the person’s profile, so dimensional metrics stay fresh without manual curation.
 
 ---
 
@@ -52,6 +53,7 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 ### Search & Enrichment
 
 - `SearchEngine` consumes bundles, aggregates matches by username, and enriches identities by appending newly captured embeddings.
+- `_auto_enrich_identity` records the similarity that triggered the update plus provenance metadata so profiles track their own dimensional growth (total embeddings, last added face ID, confidence history).
 - Thresholds and top-k settings surfaced in the Streamlit UI, along with per-face match breakdowns.
 
 ### Operations & Tooling
