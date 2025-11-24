@@ -9,7 +9,7 @@
 ## Snapshot
 
 - **Dual Embedding Bundles:** Every detected face stores DeepFace (Facenet512) + dlib encodings, normalized, weighted, and persisted for deterministic scoring.
-- **High-Detail Preprocessing:** Uploads are first streamed to the IBM MAX Image Resolution Enhancer and, if unreachable, cascade through NCNN Real-ESRGAN, native Real-ESRGAN, OpenCV SR, then bicubic so embeddings always derive from the sharpest possible pixels.
+- **High-Detail Preprocessing:** Uploads are first streamed to the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) and, if unreachable, cascade through the [Real-ESRGAN NCNN Vulkan CLI](https://github.com/nihui/realesrgan-ncnn-vulkan), native [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), OpenCV SR, then bicubic so embeddings always derive from the sharpest possible pixels.
 - **Search Pathways:** Rank results per face, aggregate matches by username, enrich identities by appending fresh embeddings post-match.
 - **Self-Training Profiles:** When a search discovers a confident match, the embedding bundle from that query is written back to the person’s profile with provenance metadata, so the system keeps learning dimensional stats (embeddings count, last added face, similarity history) automatically.
 - **Operational Tooling:** Streamlit tri-tab UI, Docker build with pip cache mount, DeepFace weight prefetch, JSON database auto-versioning.
@@ -27,7 +27,7 @@
 | Similarity search | ✅ | Weighted cosine similarity; profile centroids per username. |
 | Streamlit UI | ✅ | Search / Add / Analytics tabs with live metrics. |
 | Auto-training enrichment | ✅ | Search matches append embeddings + metadata back into each identity to grow their profile dimensions without manual labeling. |
-| Image upscaling | ✅ | IBM MAX microservice preferred, then Real-ESRGAN NCNN CLI, native Real-ESRGAN, OpenCV SR, and bicubic safety net. |
+| Image upscaling | ✅ | IBM MAX microservice preferred, then Real-ESRGAN NCNN CLI, native Real-ESRGAN, OpenCV SR, and bicubic safety net (all open-source GitHub projects). |
 | Batch processing | ✅ | `FaceRecognitionEngine.batch_process_images` for offline ingestion. |
 | Dockerized runtime | ✅ | BuildKit cache for TensorFlow, DeepFace weight caching, health checks. |
 | Testing | ✅ | `tests/` suites covering engine, DB, search flows. |

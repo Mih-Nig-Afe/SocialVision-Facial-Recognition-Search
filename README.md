@@ -33,7 +33,7 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 | **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, automatic fallbacks if TensorFlow is unavailable. |
 | **Face Search Engine** | Detection, embedding, cosine similarity search, identity aggregation, configurable thresholds, enrichment workflows that continuously learn from matches. |
 | **Self-Training Profiles** | When a search match clears the confidence threshold the system automatically appends that face’s embeddings back into the person’s profile, expanding per-user dimensions/metadata without manual labeling. |
-| **High-Fidelity Preprocessing** | Every upload is streamed to the IBM MAX Image Resolution Enhancer microservice when available, then falls through NCNN Real-ESRGAN, native Real-ESRGAN, OpenCV SR, and bicubic safety nets so embeddings always originate from the sharpest possible face crop. |
+| **High-Fidelity Preprocessing** | Every upload is streamed to the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) microservice when available, then falls through the [Real-ESRGAN NCNN Vulkan CLI](https://github.com/nihui/realesrgan-ncnn-vulkan), native [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), OpenCV SR, and bicubic safety nets so embeddings always originate from the sharpest possible face crop. |
 | **Streamlit Command Center** | Tabs for Search, Add Faces, Analytics; live metrics, threshold sliders, and enrichment summaries meant for operator demos. |
 | **Data Layer** | Local JSON store for offline demos **or** Firestore mode for centralized persistence, per-face metadata, cached profile centroids per username, normalized bundles for deterministic math. |
 | **Operations** | Docker image with BuildKit pip caching (no repeated TensorFlow wheel downloads), DeepFace weight prefetch, CLI demo script, logging + health checks. |
@@ -69,6 +69,7 @@ FaceRecognitionEngine     FaceDatabase
 - **Detection/Embedding**: `FaceRecognitionEngine` first attempts DeepFace (Facenet512) and, based on config, also runs dlib encoders. Embeddings are normalized, bundled, and tagged per backend (`{"deepface": [...], "dlib": [...]}`).
 - **Storage/Search**: `FaceDatabase` stores both the bundle and a primary embedding for backward compatibility, computes weighted cosine similarities, and maintains username centroids for quick identity queries.
 - **Self-Training Loop**: `SearchEngine` serializes the embeddings from every detected face during a search. If the top match surpasses the similarity threshold, `_auto_enrich_identity` writes the new bundle back to the matched username with provenance metadata, effectively “training” that profile using real-world query photos and expanding dimensions such as total embeddings, last-added face ID, and similarity history.
+- **Upscaling Stack**: The pipeline first calls IBM MAX, then the NCNN Real-ESRGAN binary, then the native Real-ESRGAN PyTorch implementation, with OpenCV SR as the last learned-dependent backend. All referenced projects live on GitHub for transparency and reproducibility.
 - **Presentation / Ops**: Streamlit orchestrates searches and enrichment, while Docker provides an isolated runtime with cached pip layers and pre-fetched DeepFace weights.
 
 ---

@@ -34,7 +34,7 @@ Central knowledge base for the SocialVision research project. Use this index to 
 | Document | Status | Last Updated |
 |----------|--------|--------------|
 | PROJECT_STATUS.md | 🔄 In Sync | Nov 2025 (IBM MAX refresh) |
-| CURRENT_CAPABILITIES.md | 🔄 In Sync | Nov 2025 (IBM MAX refresh) |
+| CURRENT_CAPABILITIES.md | 🔄 In Sync | Nov 2025 (IBM MAX & GitHub sourcing refresh) |
 | TESTING_GUIDE.md | ✅ Stable | Dec 2024 |
 | DOCKER_TESTING_GUIDE.md | ✅ Stable | Dec 2024 |
 | DEMONSTRATION_GUIDE.md | ✅ Stable | Dec 2024 |

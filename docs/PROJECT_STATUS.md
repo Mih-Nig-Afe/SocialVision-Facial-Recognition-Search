@@ -61,7 +61,7 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 - Dockerfile now mounts `/root/.cache/pip` during build so TensorFlow/DeepFace wheels download once.
 - DeepFace model weights cached at build time to reduce runtime downloads.
 - Health check monitors Streamlit readiness; `docker-demo.sh` streamlines demos.
-- Image preprocessing routes through IBM MAX when available, with NCNN/native Real-ESRGAN and OpenCV providing redundant safety nets.
+- Image preprocessing routes through IBM MAX when available, with NCNN/native Real-ESRGAN and OpenCV providing redundant safety nets—all three sourced from actively maintained GitHub projects so upgrades remain traceable.
 
 ### Quality & Docs
 
