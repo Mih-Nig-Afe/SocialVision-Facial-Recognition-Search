@@ -73,8 +73,11 @@ export IBM_MAX_URL="http://localhost:5000"
 export IBM_MAX_TIMEOUT=180
 # Optional: override when running the container yourself
 export IBM_MAX_PLATFORM=linux/amd64
+```
 
 > **Apple Silicon tip:** The IBM MAX image is Intel-only. If `ibm-max` keeps restarting with `Illegal instruction`, run `docker compose up -d socialvision` (skipping the sidecar) or set `IBM_MAX_ENABLED=false` so the app immediately falls back to the Real-ESRGAN/NCNN backends. You can still point `IBM_MAX_URL` at a remote MAX instance hosted on an x86 VM if you need IBM-grade previews.
+
+If the microservice is temporarily unreachable, set `IBM_MAX_FAILURE_THRESHOLD=1` so the Streamlit process disables IBM MAX after the first failure and immediately jumps to the Real-ESRGAN stack. Leave `IBM_MAX_PROBE_ON_START=true` (default) so the app pings `/model/metadata` once at boot; if the local container is already crash-looping, IBM MAX will be disabled before the first upload. Set it to `false` only when you intentionally rely on a remote endpoint that might take extra time to come online.
 ```
 
 ---

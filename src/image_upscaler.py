@@ -61,6 +61,11 @@ class MaxAPIUpscaler:
         self.enabled = getattr(config, "IBM_MAX_ENABLED", False)
         self.base_url = (getattr(config, "IBM_MAX_URL", "") or "").rstrip("/")
         self.timeout = float(getattr(config, "IBM_MAX_TIMEOUT", 120.0))
+        self.failure_threshold = max(
+            1, int(getattr(config, "IBM_MAX_FAILURE_THRESHOLD", 3))
+        )
+        self.failure_count = 0
+        self.probe_on_start = bool(getattr(config, "IBM_MAX_PROBE_ON_START", True))
 
         if self.enabled and not self.base_url:
             logger.warning("IBM MAX upscaling enabled but IBM_MAX_URL is missing")
@@ -68,12 +73,15 @@ class MaxAPIUpscaler:
         elif self.enabled:
             logger.info("IBM MAX upscaler enabled (%s)", self.base_url)
 
+        if self.enabled and self.probe_on_start:
+            self._probe_service()
+
     def upscale(self, image: np.ndarray) -> Optional[np.ndarray]:
         if not self.enabled:
             return None
 
         try:
-            import requests
+            requests = self._get_requests_module()
         except Exception as exc:  # pragma: no cover - import guard
             logger.error("requests library unavailable for IBM MAX call: %s", exc)
             return None
@@ -94,13 +102,57 @@ class MaxAPIUpscaler:
 
             if not response.content:
                 logger.warning("IBM MAX response was empty")
+                self._register_failure()
                 return None
 
             result = Image.open(io.BytesIO(response.content)).convert("RGB")
+            self._reset_failures()
             return np.array(result)[:, :, ::-1]
         except Exception as exc:
             logger.error("IBM MAX upscaling failed: %s", exc, exc_info=True)
+            self._register_failure()
             return None
+
+    def _reset_failures(self) -> None:
+        self.failure_count = 0
+
+    def _register_failure(self) -> None:
+        self.failure_count += 1
+        if self.failure_count >= self.failure_threshold:
+            if self.enabled:
+                logger.warning(
+                    "Disabling IBM MAX upscaler after %s consecutive failures",
+                    self.failure_count,
+                )
+            self.enabled = False
+
+    def _probe_service(self) -> None:
+        try:
+            requests = self._get_requests_module()
+        except Exception as exc:  # pragma: no cover - import guard
+            logger.warning("requests unavailable; disabling IBM MAX probe: %s", exc)
+            self.enabled = False
+            return
+
+        try:
+            response = requests.get(
+                f"{self.base_url}/model/metadata",
+                timeout=min(self.timeout, 5.0),
+            )
+            response.raise_for_status()
+            logger.info("IBM MAX startup probe succeeded")
+            self._reset_failures()
+        except Exception as exc:
+            logger.warning(
+                "Disabling IBM MAX after startup probe failure: %s",
+                exc,
+            )
+            self.enabled = False
+
+    def _get_requests_module(self):  # pragma: no cover - small helper
+        import requests
+
+        return requests
 
 
 class NCNNUpscaler:

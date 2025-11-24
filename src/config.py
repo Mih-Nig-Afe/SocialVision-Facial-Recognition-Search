@@ -84,6 +84,10 @@ class Config:
     IBM_MAX_ENABLED = os.getenv("IBM_MAX_ENABLED", "False").lower() == "true"
     IBM_MAX_URL = os.getenv("IBM_MAX_URL")
     IBM_MAX_TIMEOUT = float(os.getenv("IBM_MAX_TIMEOUT", "120"))
+    IBM_MAX_FAILURE_THRESHOLD = int(os.getenv("IBM_MAX_FAILURE_THRESHOLD", "3"))
+    IBM_MAX_PROBE_ON_START = (
+        os.getenv("IBM_MAX_PROBE_ON_START", "True").lower() == "true"
+    )
     NCNN_UPSCALING_ENABLED = (
         os.getenv("NCNN_UPSCALING_ENABLED", "False").lower() == "true"
     )

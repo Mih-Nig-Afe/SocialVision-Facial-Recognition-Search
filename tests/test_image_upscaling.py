@@ -99,3 +99,52 @@ def test_image_upscaler_uses_ncnn_when_ibm_disabled(monkeypatch):
 
     assert np.all(result == 7)
     assert upscaler.last_backend == "ncnn"
+
+
+def test_max_api_disables_after_consecutive_failures(monkeypatch):
+    monkeypatch.setattr(image_upscaler.config, "IBM_MAX_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        image_upscaler.config, "IBM_MAX_URL", "http://ibm-max:5000", raising=False
+    )
+    monkeypatch.setattr(image_upscaler.config, "IBM_MAX_TIMEOUT", 1, raising=False)
+    monkeypatch.setattr(
+        image_upscaler.config, "IBM_MAX_FAILURE_THRESHOLD", 2, raising=False
+    )
+    monkeypatch.setattr(
+        image_upscaler.config, "IBM_MAX_PROBE_ON_START", False, raising=False
+    )
+
+    client = image_upscaler.MaxAPIUpscaler()
+    assert client.enabled is True
+
+    client._register_failure()
+    assert client.enabled is True
+
+    client._register_failure()
+    assert client.enabled is False
+
+
+def test_max_api_probe_disables_when_unreachable(monkeypatch):
+    monkeypatch.setattr(image_upscaler.config, "IBM_MAX_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        image_upscaler.config, "IBM_MAX_URL", "http://ibm-max:5000", raising=False
+    )
+    monkeypatch.setattr(image_upscaler.config, "IBM_MAX_TIMEOUT", 2, raising=False)
+    monkeypatch.setattr(
+        image_upscaler.config, "IBM_MAX_PROBE_ON_START", True, raising=False
+    )
+
+    class DummyRequests:
+        @staticmethod
+        def get(*_args, **_kwargs):
+            raise RuntimeError("probe failure")
+
+    monkeypatch.setattr(
+        image_upscaler.MaxAPIUpscaler,
+        "_get_requests_module",
+        lambda self: DummyRequests,
+        raising=False,
+    )
+
+    client = image_upscaler.MaxAPIUpscaler()
+    assert client.enabled is False
