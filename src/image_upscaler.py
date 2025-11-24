@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import io
+import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+from PIL import Image
 
 from src.config import get_config
 from src.logger import setup_logger
@@ -48,6 +52,130 @@ OPENCV_EDSR_MODEL = {
     "name": "edsr",
 }
 
+
+class MaxAPIUpscaler:
+    """Client for the IBM MAX Image Resolution Enhancer microservice."""
+
+    def __init__(self) -> None:
+        self.enabled = getattr(config, "IBM_MAX_ENABLED", False)
+        self.base_url = (getattr(config, "IBM_MAX_URL", "") or "").rstrip("/")
+        self.timeout = float(getattr(config, "IBM_MAX_TIMEOUT", 120.0))
+
+        if self.enabled and not self.base_url:
+            logger.warning("IBM MAX upscaling enabled but IBM_MAX_URL is missing")
+            self.enabled = False
+
+    def upscale(self, image: np.ndarray) -> Optional[np.ndarray]:
+        if not self.enabled:
+            return None
+
+        try:
+            import requests
+        except Exception as exc:  # pragma: no cover - import guard
+            logger.error("requests library unavailable for IBM MAX call: %s", exc)
+            return None
+
+        try:
+            rgb_image = image[:, :, ::-1]
+            payload = io.BytesIO()
+            Image.fromarray(rgb_image).save(payload, format="PNG")
+            payload.seek(0)
+
+            endpoint = f"{self.base_url}/model/predict"
+            response = requests.post(
+                endpoint,
+                files={"image": ("input.png", payload.getvalue(), "image/png")},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+
+            if not response.content:
+                logger.warning("IBM MAX response was empty")
+                return None
+
+            result = Image.open(io.BytesIO(response.content)).convert("RGB")
+            return np.array(result)[:, :, ::-1]
+        except Exception as exc:
+            logger.error("IBM MAX upscaling failed: %s", exc, exc_info=True)
+            return None
+
+
+class NCNNUpscaler:
+    """Wrapper around the Real-ESRGAN NCNN Vulkan executable used by gimp_upscale."""
+
+    def __init__(self) -> None:
+        self.enabled = getattr(config, "NCNN_UPSCALING_ENABLED", False)
+        exec_path = getattr(config, "NCNN_EXEC_PATH", None)
+        self.exec_path = Path(exec_path).expanduser() if exec_path else None
+        self.model_name = getattr(config, "NCNN_MODEL_NAME", "realesrgan-x4plus")
+        self.scale = float(getattr(config, "NCNN_SCALE", 4.0))
+        self.tiles = int(getattr(config, "NCNN_TILES", 0))
+        self.tile_pad = int(getattr(config, "NCNN_TILE_PAD", 10))
+        self.timeout = float(getattr(config, "NCNN_TIMEOUT", 240.0))
+
+        if self.enabled and not self.exec_path:
+            logger.warning("NCNN upscaling enabled but NCNN_EXEC_PATH is missing")
+            self.enabled = False
+        if self.enabled and self.exec_path and not self.exec_path.exists():
+            logger.warning(
+                "NCNN upscaler executable not found at %s",
+                self.exec_path,
+            )
+            self.enabled = False
+
+    def upscale(self, image: np.ndarray) -> Optional[np.ndarray]:
+        if not self.enabled or self.exec_path is None:
+            return None
+
+        src_path: Optional[str] = None
+        dst_path: Optional[str] = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as src:
+                Image.fromarray(image[:, :, ::-1]).save(src.name)
+                src_path = src.name
+
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as dst:
+                dst_path = dst.name
+
+            cmd = [str(self.exec_path), "-i", src_path, "-o", dst_path]
+            if self.scale > 0:
+                cmd.extend(["-s", str(self.scale)])
+            if self.model_name:
+                cmd.extend(["-n", self.model_name])
+            if self.tiles > 0:
+                cmd.extend(["-t", str(self.tiles)])
+            if self.tile_pad > 0:
+                cmd.extend(["-p", str(self.tile_pad)])
+
+            subprocess.run(
+                cmd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=self.timeout,
+            )
+
+            result = Image.open(dst_path).convert("RGB")
+            return np.array(result)[:, :, ::-1]
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "NCNN upscaler process failed (code %s): %s",
+                exc.returncode,
+                exc.stderr.decode("utf-8", errors="ignore"),
+            )
+            return None
+        except Exception as exc:
+            logger.error("NCNN upscaler error: %s", exc, exc_info=True)
+            return None
+        finally:
+            for path in (src_path, dst_path):
+                if path and Path(path).exists():
+                    try:
+                        Path(path).unlink()
+                    except OSError:
+                        pass
+
+
 _UPSCALER: Optional["ImageUpscaler"] = None
 _UPSCALER_LOCK = threading.Lock()
 
@@ -83,6 +211,8 @@ class ImageUpscaler:
         self._opencv_sr = None
         self._opencv_scale = 1
         self._device = "cpu"
+        self._ncnn_client = NCNNUpscaler()
+        self._max_client = MaxAPIUpscaler()
 
         if self.enabled:
             self._initialize_backends()
@@ -110,15 +240,32 @@ class ImageUpscaler:
         if outscale <= 1.0:
             return image
 
+        if self._max_client.enabled:
+            upscaled = self._max_client.upscale(image)
+            finalized = self._finalize_resolution(image, upscaled, outscale)
+            if finalized is not None:
+                logger.info("Upscaled frame via IBM MAX microservice")
+                return finalized
+
+        if self._ncnn_client.enabled:
+            upscaled = self._ncnn_client.upscale(image)
+            finalized = self._finalize_resolution(image, upscaled, outscale)
+            if finalized is not None:
+                logger.info("Upscaled frame via Real-ESRGAN NCNN backend")
+                return finalized
+
         if self._realesrgan:
             upscaled = self._upscale_with_realesrgan(image, outscale)
-            if upscaled is not None:
-                return upscaled
+            finalized = self._finalize_resolution(image, upscaled, outscale)
+            if finalized is not None:
+                logger.info("Upscaled frame via native Real-ESRGAN backend")
+                return finalized
 
         if self._opencv_sr:
             upscaled = self._upscale_with_opencv(image, outscale)
-            if upscaled is not None:
-                return upscaled
+            finalized = self._finalize_resolution(image, upscaled, outscale)
+            if finalized is not None:
+                return finalized
 
         return self._fallback_resize(image, outscale)
 
@@ -274,18 +421,40 @@ class ImageUpscaler:
     def _fallback_resize(self, image: np.ndarray, outscale: float) -> np.ndarray:
         return self._resize_with_factor(image, outscale)
 
+    def _finalize_resolution(
+        self, original: np.ndarray, upscaled: Optional[np.ndarray], outscale: float
+    ) -> Optional[np.ndarray]:
+        if upscaled is None:
+            return None
+
+        expected_width = max(1, int(round(original.shape[1] * outscale)))
+        expected_height = max(1, int(round(original.shape[0] * outscale)))
+
+        if upscaled.shape[1] == expected_width and upscaled.shape[0] == expected_height:
+            return upscaled
+
+        return self._resize_to_dimensions(upscaled, expected_width, expected_height)
+
     def _resize_with_factor(self, image: np.ndarray, scale: float) -> np.ndarray:
         if scale <= 1.0:
+            return image
+
+        new_width = max(1, int(round(image.shape[1] * scale)))
+        new_height = max(1, int(round(image.shape[0] * scale)))
+        return self._resize_to_dimensions(image, new_width, new_height)
+
+    def _resize_to_dimensions(
+        self, image: np.ndarray, width: int, height: int
+    ) -> np.ndarray:
+        if image is None:
             return image
 
         try:
             import cv2  # type: ignore
 
-            new_width = max(1, int(round(image.shape[1] * scale)))
-            new_height = max(1, int(round(image.shape[0] * scale)))
             resized = cv2.resize(
                 image,
-                (new_width, new_height),
+                (width, height),
                 interpolation=cv2.INTER_CUBIC,
             )
             return resized
@@ -293,9 +462,7 @@ class ImageUpscaler:
             pil_image = self._to_pil(image)
             if pil_image is None:
                 return image
-            new_width = max(1, int(round(pil_image.width * scale)))
-            new_height = max(1, int(round(pil_image.height * scale)))
-            resized = pil_image.resize((new_width, new_height))
+            resized = pil_image.resize((width, height))
             return np.array(resized)[:, :, ::-1]
 
     # ------------------------------------------------------------------
@@ -341,13 +508,10 @@ class ImageUpscaler:
     @staticmethod
     def _to_pil(image: np.ndarray):
         try:
-            from PIL import Image  # type: ignore
-
             if image.ndim == 2:
-                mode = "L"
+                data = image
             else:
-                mode = "RGB"
-                image = image[:, :, ::-1]
-            return Image.fromarray(image, mode=mode)
+                data = image[:, :, ::-1]
+            return Image.fromarray(data)
         except Exception:
             return None

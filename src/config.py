@@ -81,6 +81,18 @@ class Config:
     IMAGE_UPSCALING_HALF_PRECISION = (
         os.getenv("IMAGE_UPSCALING_HALF_PRECISION", "False").lower() == "true"
     )
+    IBM_MAX_ENABLED = os.getenv("IBM_MAX_ENABLED", "False").lower() == "true"
+    IBM_MAX_URL = os.getenv("IBM_MAX_URL")
+    IBM_MAX_TIMEOUT = float(os.getenv("IBM_MAX_TIMEOUT", "120"))
+    NCNN_UPSCALING_ENABLED = (
+        os.getenv("NCNN_UPSCALING_ENABLED", "False").lower() == "true"
+    )
+    NCNN_EXEC_PATH = os.getenv("NCNN_EXEC_PATH")
+    NCNN_MODEL_NAME = os.getenv("NCNN_MODEL_NAME", "realesrgan-x4plus")
+    NCNN_SCALE = float(os.getenv("NCNN_SCALE", "4.0"))
+    NCNN_TILES = int(os.getenv("NCNN_TILES", "0"))
+    NCNN_TILE_PAD = int(os.getenv("NCNN_TILE_PAD", "10"))
+    NCNN_TIMEOUT = float(os.getenv("NCNN_TIMEOUT", "240"))
 
     # Search settings
     MAX_RESULTS = int(os.getenv("MAX_RESULTS", "50"))
@@ -150,6 +162,8 @@ class TestingConfig(Config):
     DB_TYPE = "local"
     LOCAL_DB_PATH = str(Config.DATA_DIR / "test_faces_database.json")
     IMAGE_UPSCALING_ENABLED = False
+    IBM_MAX_ENABLED = False
+    NCNN_UPSCALING_ENABLED = False
 
 
 def get_config() -> Config:

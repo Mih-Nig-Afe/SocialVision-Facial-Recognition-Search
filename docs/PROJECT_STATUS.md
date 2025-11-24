@@ -1,6 +1,6 @@
 # SocialVision Project Status
 
-**Last updated:** November 2025  
+**Last updated:** November 2025 (IBM MAX integration recap)  
 **Current phase:** Phase 4 – User Interface & Operational Hardening  
 **Overall completion:** ~68%
 
@@ -14,6 +14,7 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 
 - Dual-embedding pipeline with weighted similarity search is live end-to-end.
 - Docker build uses BuildKit pip caching and pre-fetches DeepFace weights, shrinking rebuilds by ~60%.
+- Upscaling stack now prioritizes IBM MAX → NCNN Real-ESRGAN → native Real-ESRGAN → OpenCV, ensuring every downstream face task runs on enhanced imagery.
 - Documentation overhaul (README + capabilities + status) brings parity with established OSS projects.
 
 ---
@@ -58,6 +59,7 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 - Dockerfile now mounts `/root/.cache/pip` during build so TensorFlow/DeepFace wheels download once.
 - DeepFace model weights cached at build time to reduce runtime downloads.
 - Health check monitors Streamlit readiness; `docker-demo.sh` streamlines demos.
+- Image preprocessing routes through IBM MAX when available, with NCNN/native Real-ESRGAN and OpenCV providing redundant safety nets.
 
 ### Quality & Docs
 

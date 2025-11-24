@@ -7,8 +7,8 @@ streamlit==1.39.0
 gradio==4.44.0
 
 # Computer Vision and Machine Learning
-# Use full OpenCV build so DeepFace and traditional pipelines share the same cv2 binary
-opencv-python==4.10.0.84
+# Use OpenCV contrib build to access dnn_superres + extra modules
+opencv-contrib-python==4.10.0.84
 numpy==1.26.4
 scipy==1.14.1
 # DeepFace with compatible TensorFlow/Keras versions (fixes LocallyConnected2D issue)
@@ -32,12 +32,11 @@ plotly==5.24.1
 Pillow==10.2.0
 imageio==2.36.0
 scikit-image==0.24.0
-torch==2.5.1
-torchvision==0.20.1
+torch==2.4.1
+torchvision==0.19.1
 realesrgan==0.3.0
 basicsr==1.4.2
 facexlib==0.3.0
-gfpgan==1.4.0
 
 # Web Scraping and HTTP
 requests==2.32.3

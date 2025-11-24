@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from src import image_utils
+from src import image_utils, image_upscaler
 
 
 def test_prepare_input_image_invokes_upscaler(monkeypatch):
@@ -41,3 +41,59 @@ def test_enhance_image_gracefully_handles_failure(monkeypatch):
     enhanced = image_utils.ImageProcessor.enhance_image(sample)
 
     np.testing.assert_array_equal(enhanced, sample)
+
+
+def test_image_upscaler_prefers_ibm_max_backend(monkeypatch):
+    class DummyNCNN:
+        def __init__(self):
+            self.enabled = True
+
+        def upscale(self, image):  # pragma: no cover - should not run
+            raise AssertionError("NCNN backend should not run when IBM MAX succeeds")
+
+    class DummyMax:
+        def __init__(self):
+            self.enabled = True
+
+        def upscale(self, image):
+            return np.clip(image + 5, 0, 255)
+
+    monkeypatch.setattr(image_upscaler, "NCNNUpscaler", lambda: DummyNCNN())
+    monkeypatch.setattr(image_upscaler, "MaxAPIUpscaler", lambda: DummyMax())
+
+    upscaler = image_upscaler.ImageUpscaler()
+    upscaler._realesrgan = None
+    upscaler._opencv_sr = None
+
+    sample = np.zeros((4, 4, 3), dtype=np.uint8)
+    result = upscaler.upscale(sample)
+
+    assert np.all(result == 5)
+
+
+def test_image_upscaler_uses_ncnn_when_ibm_disabled(monkeypatch):
+    class DummyNCNN:
+        def __init__(self):
+            self.enabled = True
+
+        def upscale(self, image):
+            return np.clip(image + 7, 0, 255)
+
+    class DummyMax:
+        def __init__(self):
+            self.enabled = False
+
+        def upscale(self, image):  # pragma: no cover - disabled
+            raise AssertionError("IBM MAX backend disabled")
+
+    monkeypatch.setattr(image_upscaler, "NCNNUpscaler", lambda: DummyNCNN())
+    monkeypatch.setattr(image_upscaler, "MaxAPIUpscaler", lambda: DummyMax())
+
+    upscaler = image_upscaler.ImageUpscaler()
+    upscaler._realesrgan = None
+    upscaler._opencv_sr = None
+
+    sample = np.zeros((2, 2, 3), dtype=np.uint8)
+    result = upscaler.upscale(sample)
+
+    assert np.all(result == 7)

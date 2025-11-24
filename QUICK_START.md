@@ -63,6 +63,18 @@ docker-compose restart
 docker-compose ps
 ```
 
+### Prefer IBM MAX Upscaling (Optional but Recommended)
+
+If you run the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) locally or via Docker, point SocialVision at it so every upload is enhanced by that service before detection:
+
+```bash
+export IBM_MAX_ENABLED=true
+export IBM_MAX_URL="http://localhost:5000"  # replace with your MAX endpoint
+export IBM_MAX_TIMEOUT=180                    # optional override (seconds)
+```
+
+When using `docker-compose`, drop the same variables under the `environment:` block for the `app` service. The pipeline will then fall back to the NCNN Real-ESRGAN CLI, native Real-ESRGAN, OpenCV, and finally bicubic resizing if the MAX service is unavailable.
+
 ---
 
 ## 🐍 Option 2: Local Installation
@@ -91,17 +103,20 @@ The application will open automatically in your browser.
 ## 🧪 Quick Test
 
 ### Test 1: Add Face
+
 1. Upload image with face
 2. Enter username
 3. Click "Add to Database"
 4. ✅ Should see success message
 
 ### Test 2: Search
+
 1. Upload same/similar image
 2. Click "Search"
 3. ✅ Should see matching results
 
 ### Test 3: Analytics
+
 1. Go to Analytics tab
 2. ✅ Should see statistics
 
@@ -154,9 +169,9 @@ pip install --upgrade -r requirements.txt
 
 - Check [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md)
 - Review [docs/DOCKER_TESTING_GUIDE.md](docs/DOCKER_TESTING_GUIDE.md)
-- Contact: mtabdevt@gmail.com
+- Contact: [mtabdevt@gmail.com](mailto:mtabdevt@gmail.com)
 
 ---
 
-*Last Updated: December 2024*
+Last Updated: November 2025 (IBM MAX upscaling refresh)
 

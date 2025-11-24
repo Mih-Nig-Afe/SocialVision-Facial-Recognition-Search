@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.DS_Store
 
 # C extensions
 *.so
@@ -137,6 +138,7 @@ env.bak/
 venv.bak/
 config/firebase_config.json
 *.firebase-adminsdk-*.json
+*firebase-adminsdk-*.json
 
 # Spyder project settings
 .spyderproject

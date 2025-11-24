@@ -33,15 +33,15 @@ Central knowledge base for the SocialVision research project. Use this index to 
 
 | Document | Status | Last Updated |
 |----------|--------|--------------|
-| PROJECT_STATUS.md | 🔄 In Sync | Nov 2025 |
-| CURRENT_CAPABILITIES.md | 🔄 In Sync | Nov 2025 |
+| PROJECT_STATUS.md | 🔄 In Sync | Nov 2025 (IBM MAX refresh) |
+| CURRENT_CAPABILITIES.md | 🔄 In Sync | Nov 2025 (IBM MAX refresh) |
 | TESTING_GUIDE.md | ✅ Stable | Dec 2024 |
 | DOCKER_TESTING_GUIDE.md | ✅ Stable | Dec 2024 |
 | DEMONSTRATION_GUIDE.md | ✅ Stable | Dec 2024 |
 | DEVELOPMENT_ROADMAP.md | ✅ Stable | Dec 2024 |
 | Technical Proposal | ✅ Stable | Jun 2025 |
 | API Documentation | ⏳ Planned | TBA |
-| Installation Guide | 🔄 Covered in root README | Nov 2025 |
+| Installation Guide | 🔄 Covered in root README/Quick Start | Nov 2025 (IBM MAX refresh) |
 
 Dates reflect the last substantive edit, not formatting changes. If you touch a document, bump the date and summarize the change at the top of that file.
 
@@ -56,5 +56,5 @@ Questions or requests for documentation updates:
 
 ---
 
-Last updated: November 2025
+Last updated: November 2025 (IBM MAX documentation refresh)
 
