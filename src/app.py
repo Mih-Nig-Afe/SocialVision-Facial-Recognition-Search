@@ -92,7 +92,7 @@ def main():
 
     # Header
     st.title("🔍 SocialVision")
-    st.markdown("### Advanced Facial Recognition Search Engine for Instagram")
+    st.markdown("### Advanced Facial Recognition Search Engine with Auto-Enrichment")
     st.markdown("---")
 
     # Initialize components
@@ -248,7 +248,7 @@ def main():
             )
 
         with col2:
-            username = st.text_input("Instagram Username")
+            username = st.text_input("Profile Identifier")
             source = st.selectbox("Source", ["profile_pic", "post", "story", "reel"])
 
         if st.button("➕ Add / Update Face", use_container_width=True):

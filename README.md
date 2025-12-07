@@ -7,7 +7,7 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ed.svg)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-SocialVision is an academic research project that builds an end‑to‑end facial recognition search engine for Instagram-style content. The stack combines **DeepFace (TensorFlow/Keras)** embeddings with **dlib/face_recognition** encodings, fuses both vectors per face, and exposes the experience through a Streamlit UI, local JSON database, and automated tests that keep the pipeline reproducible.
+SocialVision is an academic research project that builds an end‑to‑end facial recognition search engine for operator-curated visual datasets. The stack combines **DeepFace (TensorFlow/Keras)** embeddings with **dlib/face_recognition** encodings, fuses both vectors per face, and exposes the experience through a Streamlit UI, local JSON database, and automated tests that keep the pipeline reproducible.
 
 > **Maintainer**: Mihretab N. Afework ([@Mih-Nig-Afe](https://github.com/Mih-Nig-Afe)) · <mtabdevt@gmail.com>
 
@@ -33,9 +33,9 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 | **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, automatic fallbacks if TensorFlow is unavailable. |
 | **Face Search Engine** | Detection, embedding, cosine similarity search, identity aggregation, configurable thresholds, enrichment workflows that continuously learn from matches. |
 | **Self-Training Profiles** | When a search match clears the confidence threshold the system automatically appends that face’s embeddings back into the person’s profile, expanding per-user dimensions/metadata without manual labeling. |
-| **High-Fidelity Preprocessing** | Every upload is streamed to the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) microservice when available, then falls through the [Real-ESRGAN NCNN Vulkan CLI](https://github.com/nihui/realesrgan-ncnn-vulkan), native [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), OpenCV SR, and bicubic safety nets so embeddings always originate from the sharpest possible face crop. |
-| **Streamlit Command Center** | Tabs for Search, Add Faces, Analytics; live metrics, threshold sliders, and enrichment summaries meant for operator demos. |
-| **Data Layer** | Local JSON store for offline demos **or** Firestore mode for centralized persistence, per-face metadata, cached profile centroids per username, normalized bundles for deterministic math. |
+| **High-Fidelity Preprocessing** | Real-ESRGAN is the default super-resolution backend with configurable pass counts, minimum trigger scale, and per-image tile targeting (e.g., force ~25 tiles per inference) while the IBM MAX sidecar and NCNN CLI remain optional accelerators. When GPU memory is unavailable, the pipeline automatically clamps to CPU-safe settings before falling back on OpenCV/Lanczos. |
+| **Streamlit Command Center** | Tabs for Search, Add Faces, Analytics; live metrics, threshold sliders, backend telemetry, and enrichment summaries meant for operator demos. |
+| **Data Layer** | Firestore-backed `FaceDatabase` is now the recommended runtime (automatic collection provisioning, provenance metadata, username centroid cache) with the JSON store still available for fully offline demos. |
 | **Operations** | Docker image with BuildKit pip caching (no repeated TensorFlow wheel downloads), DeepFace weight prefetch, CLI demo script, logging + health checks. |
 | **Quality & Docs** | Pytest coverage for engine/database/search, reproducible fixtures, comprehensive docs mirroring professional OSS projects. |
 
@@ -69,7 +69,7 @@ FaceRecognitionEngine     FaceDatabase
 - **Detection/Embedding**: `FaceRecognitionEngine` first attempts DeepFace (Facenet512) and, based on config, also runs dlib encoders. Embeddings are normalized, bundled, and tagged per backend (`{"deepface": [...], "dlib": [...]}`).
 - **Storage/Search**: `FaceDatabase` stores both the bundle and a primary embedding for backward compatibility, computes weighted cosine similarities, and maintains username centroids for quick identity queries.
 - **Self-Training Loop**: `SearchEngine` serializes the embeddings from every detected face during a search. If the top match surpasses the similarity threshold, `_auto_enrich_identity` writes the new bundle back to the matched username with provenance metadata, effectively “training” that profile using real-world query photos and expanding dimensions such as total embeddings, last-added face ID, and similarity history.
-- **Upscaling Stack**: The pipeline first calls IBM MAX, then the NCNN Real-ESRGAN binary, then the native Real-ESRGAN PyTorch implementation, with OpenCV SR as the last learned-dependent backend. All referenced projects live on GitHub for transparency and reproducibility.
+- **Upscaling Stack**: Native Real-ESRGAN now leads the stack with tunable passes, minimum AI trigger scale, and per-frame tile targeting (`IMAGE_UPSCALING_TARGET_TILES`). IBM MAX (optional sidecar) and the NCNN Real-ESRGAN CLI remain ahead of OpenCV/Lanczos in the automatic fallback chain, and CPU-only hosts auto-clamp to a single 4× pass to stay responsive.
 - **Presentation / Ops**: Streamlit orchestrates searches and enrichment, while Docker provides an isolated runtime with cached pip layers and pre-fetched DeepFace weights.
 
 ---
@@ -114,11 +114,12 @@ Features of the container image:
 - BuildKit cache mount for pip (`/root/.cache/pip`) so large wheels (TensorFlow, DeepFace) download once.
 - Pre-fetch of DeepFace weights during build, reducing cold-start latency.
 - Health check hitting `/_stcore/health` to signal readiness.
-- Bundled [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) service running as `ibm-max`, with `socialvision-app` wired to call it automatically (`IBM_MAX_URL=http://ibm-max:5000`). Override the exposed host port via `IBM_MAX_HOST_PORT` (defaults to `5100`) if something else already listens on `localhost:5000`, and override the image architecture with `IBM_MAX_PLATFORM` (defaults to `linux/amd64`) when running on Apple Silicon via emulation.
+- Real-ESRGAN weights baked into `models/` plus environment-driven tiling so Docker-on-Mac users can force ~25 tiles per frame without editing code.
+- Optional [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) sidecar running as `ibm-max`, with `socialvision-app` wired to call it automatically (`IBM_MAX_URL=http://ibm-max:5000`). Override the exposed host port via `IBM_MAX_HOST_PORT` (defaults to `5100`) if something else already listens on `localhost:5000`, and override the image architecture with `IBM_MAX_PLATFORM` (defaults to `linux/amd64`) when running on Apple Silicon via emulation.
 
 Access the UI at `http://localhost:8501`.
 
-> **Apple Silicon note:** IBM's published MAX image is Intel-only and requires AVX instructions. On M-series Macs the container typically restarts with `Illegal instruction` even under emulation. In that case either (a) set `IBM_MAX_ENABLED=false` and run `docker compose up -d socialvision` to rely on the bundled Real-ESRGAN stack, or (b) point `IBM_MAX_URL` to a remote MAX deployment you control (for example an x86 cloud VM exposing the same API).
+> **Apple Silicon note:** IBM's published MAX image is Intel-only and requires AVX instructions. On M-series Macs the container typically restarts with `Illegal instruction` even under emulation. In that case either (a) set `IBM_MAX_ENABLED=false` and run `docker compose up -d socialvision` to rely on the bundled Real-ESRGAN stack (which now auto-tiles on CPU), or (b) point `IBM_MAX_URL` to a remote MAX deployment you control (for example an x86 cloud VM exposing the same API).
 
 ---
 
@@ -160,7 +161,10 @@ Key environment variables (see `src/config.py` for defaults):
 | `DEEPFACE_EMBEDDING_WEIGHT` / `DLIB_EMBEDDING_WEIGHT` | Similarity weights applied during search. |
 | `FACE_SIMILARITY_THRESHOLD` | Global cosine similarity cut-off. |
 | `IMAGE_UPSCALING_ENABLED` | Enables the multi-backend super-resolution pipeline before detection (default `true`). |
-| `IMAGE_UPSCALING_BACKEND` / `IMAGE_UPSCALING_TARGET_SCALE` | Choose the native Real-ESRGAN model (e.g. `realesrgan_x4plus`) and preferred out-scale for local inference. |
+| `IMAGE_UPSCALING_BACKEND` / `IMAGE_UPSCALING_TARGET_SCALE` | Choose the native Real-ESRGAN model (e.g. `realesrgan_x4plus` or the new `realesrgan_x6plus` alias) and preferred out-scale for local inference. |
+| `IMAGE_UPSCALING_MAX_PASSES` | Maximum number of Real-ESRGAN passes to chain (default `2`) before falling back to OpenCV/Lanczos, keeping RAM usage predictable. |
+| `IMAGE_UPSCALING_TARGET_TILES` | Desired number of Real-ESRGAN tiles per frame (default `0`, meaning “use the configured tile size”). Set to `25` to force roughly a 5×5 grid so that every image benefits from tiled inference, even on CPU-only Docker. |
+| `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE` | Smallest requested upscale factor that still triggers Real-ESRGAN (default `1.05`). Set to `1.0` to always run the AI upscaler even for near-1× touch-ups, or raise it if you prefer to skip Real-ESRGAN for tiny adjustments. |
 | `IBM_MAX_ENABLED` / `IBM_MAX_URL` / `IBM_MAX_TIMEOUT` | Toggle the IBM MAX Image Resolution Enhancer client, set its base URL, and override HTTP timeout (defaults: disabled, 120s). |
 | `IBM_MAX_HOST_PORT` | Host-side port that exposes the IBM MAX health/API endpoint (default `5100`); useful when `localhost:5000` is already reserved. |
 | `IBM_MAX_PLATFORM` | Docker platform string passed to the IBM MAX service (default `linux/amd64`); set to `linux/amd64` on Apple Silicon so QEMU emulation runs the upstream image. |
@@ -171,6 +175,8 @@ Key environment variables (see `src/config.py` for defaults):
 | `DB_TYPE` | `local` (JSON) or `firestore`; controls which backend `FaceDatabase` instantiates. |
 | `FIRESTORE_DATABASE_ID` | Firestore database ID (default `(default)`). |
 | `FIRESTORE_LOCATION_ID` | Region for Firestore (e.g. `us-central`, `nam5`). |
+
+> **Upscaling note:** With **12GB** allocated to Docker/Compose the app can chain up to **two** Real-ESRGAN passes using the `realesrgan_x6plus` preset (`IMAGE_UPSCALING_TARGET_SCALE=8.0`, `IMAGE_UPSCALING_MAX_PASSES=2`). On CPU-only hosts the code automatically clamps to a single 4× Real-ESRGAN pass (plus a lightweight interpolation touch-up) to keep processing times reasonable; CUDA-equipped machines keep the full multi-pass sequence. If PyTorch reports an out-of-memory error on any pass the code retries at a smaller scale (or the previous successful pass) before falling back to OpenCV/Lanczos. Lower these env vars on leaner machines.
 
 Add optional secrets (Firebase, etc.) via `.env` or environment-specific config classes.
 
@@ -230,7 +236,7 @@ All three suites are CI-friendly and cover the dual-embedding engine, bundle-awa
 
 **Current focus:**
 
-- Expanding dataset ingestion (Instagram automation, Firebase sync)
+- Expanding dataset ingestion (automated capture jobs, Firebase sync)
 - Hardening API surface (FastAPI service layer)
 - Enhancing scalability (vector index, embeddings rebalancing)
 

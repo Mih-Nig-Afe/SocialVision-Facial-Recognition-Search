@@ -1,7 +1,7 @@
 # SocialVision Current Capabilities
 
-**Version:** 1.2.1  
-**Last Updated:** November 2025 (IBM MAX upscaling refresh)  
+**Version:** 1.3.0  
+**Last Updated:** December 2025 (Real-ESRGAN tiling + Firestore)  
 **Audience:** Engineers, QA, demo facilitators
 
 ---
@@ -9,7 +9,7 @@
 ## Snapshot
 
 - **Dual Embedding Bundles:** Every detected face stores DeepFace (Facenet512) + dlib encodings, normalized, weighted, and persisted for deterministic scoring.
-- **High-Detail Preprocessing:** Uploads are first streamed to the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) and, if unreachable, cascade through the [Real-ESRGAN NCNN Vulkan CLI](https://github.com/nihui/realesrgan-ncnn-vulkan), native [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN), OpenCV SR, then bicubic so embeddings always derive from the sharpest possible pixels.
+- **High-Detail Preprocessing:** Native Real-ESRGAN is now the default super-resolution backend with configurable pass counts, minimum trigger scale, and per-frame tile targeting (e.g., force ~25 tiles). When IBM MAX or the NCNN CLI are available they slot ahead of OpenCV/Lanczos, but CPU-only Docker automatically clamps Real-ESRGAN to a single 4× pass to stay responsive.
 - **Search Pathways:** Rank results per face, aggregate matches by username, enrich identities by appending fresh embeddings post-match.
 - **Self-Training Profiles:** When a search discovers a confident match, the embedding bundle from that query is written back to the person’s profile with provenance metadata, so the system keeps learning dimensional stats (embeddings count, last added face, similarity history) automatically.
 - **Operational Tooling:** Streamlit tri-tab UI, Docker build with pip cache mount, DeepFace weight prefetch, JSON database auto-versioning.
@@ -27,12 +27,12 @@
 | Similarity search | ✅ | Weighted cosine similarity; profile centroids per username. |
 | Streamlit UI | ✅ | Search / Add / Analytics tabs with live metrics. |
 | Auto-training enrichment | ✅ | Search matches append embeddings + metadata back into each identity to grow their profile dimensions without manual labeling. |
-| Image upscaling | ✅ | IBM MAX microservice preferred, then Real-ESRGAN NCNN CLI, native Real-ESRGAN, OpenCV SR, and bicubic safety net (all open-source GitHub projects). |
+| Image upscaling | ✅ | Real-ESRGAN-first pipeline with configurable minimum trigger scale, max passes, target tile count, and CPU-aware clamps; IBM MAX and the NCNN CLI remain optional accelerators ahead of OpenCV/Lanczos. |
+| Firestore integration | ✅ | Firestore-backed `FaceDatabase` provisions collections automatically, keeps provenance metadata, and mirrors writes with the enrichment pipeline; JSON store remains for offline-only demos. |
 | Batch processing | ✅ | `FaceRecognitionEngine.batch_process_images` for offline ingestion. |
 | Dockerized runtime | ✅ | BuildKit cache for TensorFlow, DeepFace weight caching, health checks. |
 | Testing | ✅ | `tests/` suites covering engine, DB, search flows. |
-| Firebase integration | 🚧 Planned | Config scaffolding exists; no sync yet. |
-| Instagram ingestion | 🚧 Planned | Manual uploads only today. |
+| Automated ingestion | 🚧 Planned | Manual uploads only today. |
 | API endpoints | 🚧 Planned | Streamlit UI currently drives core features. |
 
 ---
@@ -75,8 +75,8 @@ matches = db.search_similar_faces(query, threshold=0.35, top_k=5)
 | Area | Details | Mitigation |
 |------|---------|------------|
 | Data store | JSON file scales linearly; no vector index. | Keep dataset <10k faces or migrate to vector DB (planned). |
-| Cloud sync | Firebase hooks not wired, so no remote backup. | Manual copy of `data/faces_database.json`; Firebase work tracked in roadmap. |
-| Automation | Instagram ingestion and API endpoints not implemented. | Streamlit UI/manual uploads only for now. |
+| Cloud sync | Firestore is default but still single-region. | Enable backup tooling / multi-region replication via Firebase console. |
+| Automation | External ingestion and API endpoints not implemented. | Streamlit UI/manual uploads only for now. |
 | GPU utilization | Pipelines run on CPU by default; containers assume CPU. | Evaluate GPU-enabled base image when moving beyond research demos. |
 
 ---
@@ -123,9 +123,11 @@ Manual smoke tests:
 - `DEEPFACE_EMBEDDING_WEIGHT` / `DLIB_EMBEDDING_WEIGHT` tune how similarity scores blend.
 - `LOCAL_DB_PATH` switches JSON storage (default `data/faces_database.json`).
 - `FACE_SIMILARITY_THRESHOLD` globally affects Search + Enrichment.
-- `IMAGE_UPSCALING_ENABLED` keeps the multi-backend super-resolution stage active (default `true`).
-- `IBM_MAX_ENABLED`, `IBM_MAX_URL`, `IBM_MAX_TIMEOUT` control the preferred IBM MAX microservice client.
-- `NCNN_UPSCALING_ENABLED`, `NCNN_EXEC_PATH`, `NCNN_MODEL_NAME` configure the Real-ESRGAN NCNN Vulkan fallback.
+| `IMAGE_UPSCALING_ENABLED` keeps the multi-backend super-resolution stage active (default `true`).
+| `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE` + `IMAGE_UPSCALING_TARGET_TILES` tune when Real-ESRGAN fires and how many tiles it should consume per frame.
+| `IBM_MAX_ENABLED`, `IBM_MAX_URL`, `IBM_MAX_TIMEOUT` control the optional IBM MAX microservice client.
+| `NCNN_UPSCALING_ENABLED`, `NCNN_EXEC_PATH`, `NCNN_MODEL_NAME` configure the Real-ESRGAN NCNN Vulkan fallback.
+| `DB_TYPE=firestore`, `FIREBASE_ENABLED=true`, and service-account credentials at `config/firebase_config.json` switch the database driver from JSON to Firestore (default in Docker).
 
 See `src/config.py` for the full catalog.
 
@@ -145,5 +147,5 @@ Questions go to Mihretab N. Afework · <mtabdevt@gmail.com>.
 
 ---
 
-Last updated: November 2025
+Last updated: December 2025
 

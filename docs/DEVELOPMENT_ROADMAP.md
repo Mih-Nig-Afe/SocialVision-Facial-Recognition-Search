@@ -8,7 +8,7 @@
 
 ## 📊 Project Overview
 
-This roadmap outlines the development plan for SocialVision, a facial recognition search engine for Instagram content analysis. The project is currently at **60% completion** and in **Phase 3** of development.
+This roadmap outlines the development plan for SocialVision, a facial recognition search engine for large-scale visual content analysis. The project is currently at **60% completion** and in **Phase 3** of development.
 
 ---
 
@@ -51,19 +51,19 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 - ✅ Design batch processing
 - ✅ Image validation utilities
 
-#### Week 4: Instagram Data Collection
-- ❌ Research Instagram Basic Display API
-- ❌ Implement ethical web scraping
-- ❌ Create data collection pipeline
+#### Week 4: External Data Collection
+- ❌ Research relevant public APIs/data sources
+- ❌ Implement ethical collection mechanisms
+- ❌ Create data ingestion pipeline
 - ❌ Design metadata extraction
 - ❌ Implement error handling and retry mechanisms
 
 **Deliverables:**
 - ✅ Image processing pipeline
 - ✅ Face detection and embedding extraction
-- ❌ Instagram data collection (deferred)
+- ❌ Automated data collection (deferred)
 
-**Note:** Instagram integration deferred to later phase due to API access requirements.
+**Note:** Automated ingestion deferred to a later phase due to external API access requirements.
 
 ---
 
@@ -178,23 +178,23 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 
 ---
 
-### Phase 7: Instagram Integration (Weeks 14-17)
+### Phase 7: External Data Integration (Weeks 14-17)
 
 **Status:** ❌ **Not Started**
 
 **Objectives:**
-- Integrate Instagram Basic Display API
-- Implement ethical web scraping
-- Create data collection pipeline
+- Integrate approved third-party APIs
+- Implement ethical collection workflows
+- Create automated data ingestion pipeline
 - Handle rate limiting
 
 **Tasks:**
-1. Research Instagram API
-2. Obtain API credentials
-3. Implement API integration
-4. Create scraping pipeline
+1. Research prioritized platform APIs
+2. Obtain API credentials/agreements
+3. Implement API integration layer
+4. Create scraping/ingestion pipeline
 5. Add rate limiting
-6. Legal compliance review
+6. Legal/compliance review
 7. Testing
 
 **Estimated Effort:** 4 weeks
@@ -291,7 +291,7 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
    - Firebase Storage
    - Real-time sync
 
-2. **Instagram Integration**
+2. **External Data Integration**
    - API integration
    - Data collection pipeline
    - Rate limiting
@@ -332,7 +332,7 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 | Phase 4: UI Development | ⚠️ In Progress | 90% |
 | Phase 5: Testing | ⚠️ In Progress | 40% |
 | Phase 6: Firebase | ❌ Not Started | 0% |
-| Phase 7: Instagram | ❌ Not Started | 0% |
+| Phase 7: External Ingestion | ❌ Not Started | 0% |
 | Phase 8: API | ❌ Not Started | 0% |
 | Phase 9: Advanced | ❌ Not Started | 0% |
 
@@ -347,7 +347,7 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 | Streamlit UI | ✅ Complete | High |
 | Unit Tests | ✅ Complete | High |
 | Firebase Integration | ❌ Not Started | High |
-| Instagram Integration | ❌ Not Started | Medium |
+| External Data Integration | ❌ Not Started | Medium |
 | API Endpoints | ❌ Not Started | Medium |
 | Advanced Features | ⚠️ Partial | Low |
 | Performance Optimization | ❌ Not Started | Medium |
@@ -421,7 +421,7 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 
 ### Planned ❌
 
-- Instagram API integration
+- External API integration
 - Mobile app development
 - Advanced ML techniques
 - Production deployment
@@ -442,7 +442,7 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 - [ ] Week 8: UI enhancements complete
 - [ ] Week 10: Testing complete
 - [ ] Week 13: Firebase integration complete
-- [ ] Week 17: Instagram integration complete
+- [ ] Week 17: External ingestion integration complete
 - [ ] Week 19: API development complete
 
 ---

@@ -246,7 +246,7 @@ The application will open in your browser at `http://localhost:8501`
 **Steps:**
 1. Navigate to "📤 Add Faces" tab
 2. Upload an image with faces
-3. Enter Instagram username
+3. Enter username
 4. Select source type (profile_pic, post, story, reel)
 5. Click "➕ Add to Database"
 6. Verify success message
@@ -327,9 +327,9 @@ The application will open in your browser at `http://localhost:8501`
    - No cloud storage
    - No real-time sync
 
-2. **No Instagram Integration**
-   - Manual face addition only
-   - No automatic data collection
+2. **No Automated Ingestion**
+    - Manual face addition only
+    - No automatic data collection
 
 3. **Embedding Dimension Mismatch**
    - Database expects 128-dim embeddings
@@ -337,8 +337,8 @@ The application will open in your browser at `http://localhost:8501`
    - **Note:** This needs to be fixed
 
 4. **Limited Test Data**
-   - No real Instagram data
-   - Limited sample images
+    - No real production data feed
+    - Limited sample images
 
 ---
 

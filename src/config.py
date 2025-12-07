@@ -97,15 +97,20 @@ class Config:
     IMAGE_UPSCALING_HALF_PRECISION = (
         os.getenv("IMAGE_UPSCALING_HALF_PRECISION", "False").lower() == "true"
     )
+    IMAGE_UPSCALING_MAX_PASSES = int(os.getenv("IMAGE_UPSCALING_MAX_PASSES", "2"))
+    IMAGE_UPSCALING_MIN_REALESRGAN_SCALE = float(
+        os.getenv("IMAGE_UPSCALING_MIN_REALESRGAN_SCALE", "1.05")
+    )
+    IMAGE_UPSCALING_TARGET_TILES = int(os.getenv("IMAGE_UPSCALING_TARGET_TILES", "0"))
     # Multi-backend extraction: try all upscaling backends and aggregate embeddings
     MULTI_BACKEND_EXTRACTION = (
         os.getenv("MULTI_BACKEND_EXTRACTION", "True").lower() == "true"
     )
-    # Backend priority: OpenCV first (low memory), then Lanczos fallback
-    # Real-ESRGAN disabled by default due to high memory usage on ARM64/Apple Silicon
+    # Backend priority: prefer Real-ESRGAN when at least ~12GB RAM/VRAM is available
+    # and fall back to OpenCV/Lanczos automatically on constrained devices
     IMAGE_UPSCALING_BACKEND_PRIORITY = os.getenv(
         "IMAGE_UPSCALING_BACKEND_PRIORITY",
-        "opencv,lanczos",
+        "realesrgan,opencv,lanczos",
     )
     IBM_MAX_ENABLED = os.getenv("IBM_MAX_ENABLED", "True").lower() == "true"
     IBM_MAX_URL = os.getenv("IBM_MAX_URL", "http://ibm-max:5000")

@@ -64,23 +64,24 @@ services:
       # Multi-backend extraction: try all backends, aggregate results
       - MULTI_BACKEND_EXTRACTION=true
       - IMAGE_UPSCALING_ENABLED=true
-      # Use OpenCV EDSR as default (much less memory than Real-ESRGAN)
-      - IMAGE_UPSCALING_BACKEND=opencv
-      # Fallback chain: OpenCV -> Lanczos (Real-ESRGAN disabled due to high memory)
-      - IMAGE_UPSCALING_BACKEND_PRIORITY=opencv,lanczos
-      # Memory-efficient settings
-      - IMAGE_UPSCALING_TILE=0
-      - IMAGE_UPSCALING_TILE_PAD=10
-      - IMAGE_UPSCALING_TARGET_SCALE=2.0
-      - IMAGE_UPSCALING_MIN_EDGE=256
-      - IMAGE_UPSCALING_MAX_EDGE=1024
-    # No memory limits - use all available system resources
+      # Use Real-ESRGAN for highest fidelity (Docker memory limit capped at 12G)
+      - IMAGE_UPSCALING_BACKEND=realesrgan_x6plus
+      # Fallback chain: Real-ESRGAN -> OpenCV -> Lanczos for constrained hosts
+      - IMAGE_UPSCALING_BACKEND_PRIORITY=realesrgan,opencv,lanczos
+      # Memory-aware tiling keeps VRAM usage manageable for multi-pass 8x runs
+      - IMAGE_UPSCALING_TILE=192
+      - IMAGE_UPSCALING_TILE_PAD=16
+      - IMAGE_UPSCALING_TARGET_SCALE=8.0
+      - IMAGE_UPSCALING_MIN_EDGE=320
+      - IMAGE_UPSCALING_MAX_EDGE=4096
+      - IMAGE_UPSCALING_MAX_PASSES=2
+    # Memory cap managed via Docker Desktop/Engine (set to 12G now); keep deploy block commented for non-Swarm usage
     # deploy:
     #   resources:
     #     limits:
-    #       memory: 6G
+    #       memory: 12G
     #     reservations:
-    #       memory: 2G
+    #       memory: 4G
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]

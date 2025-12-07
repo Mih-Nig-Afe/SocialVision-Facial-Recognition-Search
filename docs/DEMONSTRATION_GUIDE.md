@@ -1,8 +1,8 @@
 # SocialVision Demonstration Guide
 
 **How to Show What the Application Does**  
-**Version:** 1.0.0  
-**Last Updated:** December 2024
+**Version:** 1.1.0  
+**Last Updated:** December 2025 (Firestore + Real-ESRGAN tiling)
 
 ---
 
@@ -17,17 +17,26 @@ This guide helps you demonstrate SocialVision's capabilities to others, whether 
 
 ---
 
+## 📌 Current Status Snapshot (December 2025)
+
+- Real-ESRGAN x4 is the default upscaler with adaptive tile targeting and CPU guardrails
+- Firestore FaceDatabase is live by default (JSON + Firestore emulator supported for offline demos)
+- DeepFace/VGGFace2 embeddings drive similarity search with configurable thresholds and telemetry logs
+- Streamlit UI exposes Search, Add Faces, and Analytics tabs plus backend status indicators (Firestore, GPU, model cache)
+
+---
+
 ## 🚀 Quick Demo Setup
 
 ### Option 1: Docker (Recommended)
 
 ```bash
-# 1. Build and start
-docker-compose build
-docker-compose up -d
+# 1. Build and start (Real-ESRGAN + Firestore defaults baked in)
+docker compose build
+docker compose up -d
 
 # 2. Wait for startup (30-60 seconds)
-docker-compose logs -f
+docker compose logs -f
 
 # 3. Open browser
 open http://localhost:8501
@@ -53,12 +62,12 @@ streamlit run src/app.py
 ### Part 1: Introduction (2 minutes)
 
 **What to Say:**
-> "SocialVision is a facial recognition search engine designed for Instagram content analysis. It can detect faces in images, extract unique facial features, and search for similar faces in a database. Let me show you what it can do."
+> "SocialVision is a facial recognition search engine designed for analyst-curated visual collections. It can detect faces in images, extract unique facial features, and search for similar faces in a database. Let me show you what it can do."
 
 **What to Show:**
-- Open the application
+- Open the application (point out the "Initialized Firestore FaceDatabase" log line if using the cloud backend)
 - Show the three main tabs: Search, Add Faces, Analytics
-- Point out the clean, professional interface
+- Point out the clean, professional interface and mention that backend telemetry (Real-ESRGAN tiling, DeepFace status) is visible in the logs
 
 ### Part 2: Adding Faces to Database (3 minutes)
 
@@ -68,11 +77,11 @@ streamlit run src/app.py
 **Steps to Demonstrate:**
 
 1. **Go to "📤 Add Faces" tab**
-   - Explain: "This is where we add new faces to our database"
+   - Explain: "This is where we add new faces to our Firestore-backed database (JSON fallback still available for offline demos)"
 
 2. **Upload a test image**
    - Use an image with 1-2 clear faces
-   - Explain: "The system accepts JPG, PNG, and other common formats"
+   - Explain: "The system accepts JPG, PNG, WebP, HEIC, and other common formats"
 
 3. **Enter metadata**
    - Username: "demo_user_1"
@@ -81,7 +90,7 @@ streamlit run src/app.py
 
 4. **Click "➕ Add to Database"**
    - Show the processing spinner
-   - Explain: "The system is detecting faces and extracting 512-dimensional embeddings"
+   - Explain: "The system upscales via Real-ESRGAN (watch the tiling logs), detects faces, and extracts 512-dimensional embeddings"
    - Wait for success message
 
 5. **Repeat with 2-3 more images**
@@ -102,7 +111,7 @@ streamlit run src/app.py
 **Steps to Demonstrate:**
 
 1. **Go to "🔎 Search" tab**
-   - Explain: "This is our search interface"
+   - Explain: "This is our search interface" (mention the backend logs show which upscaler ran and how many tiles were used)
 
 2. **Upload a query image**
    - Use an image similar to one you added
@@ -116,7 +125,7 @@ streamlit run src/app.py
 
 4. **Click "🔍 Search"**
    - Show processing
-   - Explain: "The system is detecting faces, extracting embeddings, and searching the database"
+   - Explain: "The system is upscaling (Real-ESRGAN tile logs), detecting faces, extracting embeddings, and searching the Firestore database"
 
 5. **Show results**
    - Point out: "Found X matches across Y users"
@@ -203,10 +212,10 @@ streamlit run src/app.py
 4. Q&A (2 min)
 
 **Key Technical Points:**
+- Real-ESRGAN upscaling pass with adaptive tile targeting (logged per request)
 - VGGFace2 model for embeddings
-- 512-dimensional feature vectors
-- Euclidean distance for similarity
-- Local JSON database (scalable to Firebase)
+- 512-dimensional feature vectors scored with Euclidean distance
+- Firestore FaceDatabase (JSON fallback kept for air-gapped demos)
 
 ### Scenario 2: Client Demo (8 minutes)
 
@@ -224,10 +233,10 @@ streamlit run src/app.py
 4. Next steps (1 min)
 
 **Key Business Points:**
-- Instagram content analysis
+- Visual content analysis
 - Fraud detection potential
-- Scalable architecture
-- Privacy-first approach
+- Managed Firestore backend with auditable metadata
+- Privacy-first architecture with local/offline fallback
 
 ### Scenario 3: Portfolio Showcase (5 minutes)
 
@@ -267,6 +276,11 @@ streamlit run src/app.py
 - Captures unique facial features
 - Robust to lighting/angle changes
 
+✅ **Upscaling Pipeline**
+- Real-ESRGAN x4 (primary) with CPU-safe tiling
+- Optional EDSR fallback for non-CUDA hosts
+- Target-tiles auto-adjusts to keep latency <2 s per image
+
 ✅ **Similarity Search**
 - Vector-based similarity
 - Euclidean distance calculation
@@ -274,10 +288,10 @@ streamlit run src/app.py
 - Fast search (<5 seconds)
 
 ✅ **Database System**
-- Local JSON storage (current)
-- Scalable to Firebase (planned)
-- Metadata tracking
-- Statistics and analytics
+- Firestore FaceDatabase with provenance metadata
+- Local JSON cache/fallback for offline demos
+- Metadata tracking (username, ingestion source, timestamps)
+- Built-in statistics and analytics views
 
 ### User Experience
 
@@ -304,24 +318,24 @@ streamlit run src/app.py
 ### For Technical Audiences
 
 1. **Architecture:**
-   - "Modular design with separate components for face recognition, database, and search"
-   - "Uses dependency injection for testability"
-   - "Graceful degradation when optional dependencies unavailable"
+   - "Modular services for upscaling, recognition, search, and Firestore persistence"
+   - "Dependency injection keeps the Streamlit app + pipeline independently testable"
+   - "Graceful degradation to JSON storage and EDSR when cloud/GPU resources unavailable"
 
 2. **Machine Learning:**
-   - "VGGFace2 model for state-of-the-art face recognition"
-   - "512-dimensional embeddings capture facial features"
-   - "Euclidean distance for similarity calculation"
+   - "Real-ESRGAN tiling pre-processor delivers higher recall on low-res inputs"
+   - "VGGFace2 embeddings (512-dim) drive similarity search"
+   - "Euclidean distance with configurable acceptance thresholds"
 
 3. **Scalability:**
-   - "Currently uses local JSON, designed for Firebase migration"
-   - "Vector search can be optimized with FAISS/Annoy"
-   - "Batch processing support for large datasets"
+   - "Firestore is the default multi-region backend with automatic collection provisioning"
+   - "Vector search layer can be swapped for FAISS/Annoy when dataset grows"
+   - "Batch ingestion and streaming pipelines keep throughput predictable"
 
 ### For Business Audiences
 
 1. **Use Cases:**
-   - "Instagram content analysis"
+   - "Visual content analysis and discovery"
    - "Fraud detection (stolen profile pictures)"
    - "Content moderation"
    - "User verification"
@@ -329,14 +343,14 @@ streamlit run src/app.py
 2. **Benefits:**
    - "Fast search (<5 seconds)"
    - "Accurate matching (95%+ for clear faces)"
-   - "Scalable architecture"
-   - "Privacy-first approach"
+   - "Managed Firestore storage with audit metadata"
+   - "Privacy-first architecture"
 
 3. **Future Potential:**
-   - "Firebase integration for cloud scale"
-   - "Instagram API integration"
-   - "REST API for programmatic access"
-   - "Mobile app development"
+   - "Multi-tenant Firestore projects with per-client encryption"
+   - "Automated ingestion connectors for external sources"
+   - "REST and gRPC APIs for programmatic access"
+   - "Mobile capture companion app"
 
 ---
 
@@ -360,6 +374,7 @@ streamlit run src/app.py
 **Backup Plan:**
 - Lower the threshold
 - Add more faces first
+- Confirm Firestore status badge shows **CONNECTED** (switch to JSON fallback if offline)
 - Use the same image you added
 
 ### If Application Crashes
@@ -379,6 +394,7 @@ streamlit run src/app.py
 ### Before the Demo
 
 - [ ] Application is running and accessible
+- [ ] Firestore credentials/service account JSON is loaded (or FIRESTORE_EMULATOR_HOST set)
 - [ ] Test images are ready (3-5 images with faces)
 - [ ] Database has some test data (optional)
 - [ ] Browser is open and ready

@@ -1,4 +1,4 @@
-# Technical Proposal: SocialVision - Advanced Facial Recognition Search Engine for Instagram Content Analysis
+# Technical Proposal: SocialVision - Advanced Facial Recognition Search Engine for Visual Content Analysis
 
 **A Comprehensive Academic Research Project Proposal**
 
@@ -23,11 +23,11 @@
 
 ## Executive Summary
 
-**Project Title:** SocialVision - Intelligent Facial Recognition Search Engine for Social Media Content Discovery
+**Project Title:** SocialVision - Intelligent Facial Recognition Search Engine for Visual Content Discovery
 
 ### Project Abstract
 
-SocialVision represents an innovative educational research project that develops a sophisticated facial recognition search engine specifically designed for Instagram content analysis. The system enables users to upload a photograph and discover similar faces across Instagram's vast ecosystem of posts, stories, highlights, profile pictures, and reels. This project serves dual purposes: advancing understanding of computer vision technologies and addressing critical social media security concerns through automated detection of potentially fraudulent accounts using stolen or impersonated profile images.
+SocialVision represents an innovative educational research project that develops a sophisticated facial recognition search engine specifically designed for analyst-curated visual content analysis. The system enables users to upload a photograph and discover similar faces across large repositories of user-generated media such as posts, highlights, profile pictures, and reels. This project serves dual purposes: advancing understanding of computer vision technologies and addressing critical online security concerns through automated detection of potentially fraudulent accounts using stolen or impersonated profile images.
 
 The project emphasizes academic rigor, ethical considerations, and technical excellence while operating under strict zero-budget constraints, utilizing only free-tier services, open-source libraries, and educational resources.
 
@@ -35,7 +35,7 @@ The project emphasizes academic rigor, ethical considerations, and technical exc
 
 ### 1.1 Problem Statement
 
-Social media platforms, particularly Instagram with over 2 billion active users, face significant challenges with identity theft, catfishing, and fraudulent accounts. Current manual verification processes are insufficient to address the scale of this problem. Additionally, researchers and educators lack accessible tools to study facial recognition technologies and their applications in social media contexts.
+Large-scale visual platforms face significant challenges with identity theft, catfishing, and fraudulent accounts. Current manual verification processes are insufficient to address the scale of this problem. Additionally, researchers and educators lack accessible tools to study facial recognition technologies and their applications in social media contexts.
 
 ### 1.2 Research Objectives
 
@@ -123,7 +123,7 @@ This project provides hands-on experience with:
 3. **Feature Extraction**: Generate 128-dimensional face embeddings using dlib
 4. **Vector Search**: Query Firestore for similar embeddings using NumPy
 5. **Result Ranking**: Sort by similarity score using SciPy distance metrics
-6. **Content Retrieval**: Fetch Instagram metadata using Python requests
+6. **Content Retrieval**: Fetch approved metadata using Python requests
 7. **Response Delivery**: Display results in Streamlit dashboard
 
 ## 3. Detailed Technical Implementation Plan
@@ -148,10 +148,10 @@ This project provides hands-on experience with:
 
 ### Phase 2: Data Collection and Processing (Weeks 3-4)
 
-**Week 3: Instagram Data Collection**
+**Week 3: External Data Collection**
 
-- Research Instagram Basic Display API with Python requests
-- Implement ethical web scraping using BeautifulSoup/Selenium
+- Research approved platform APIs with Python requests
+- Implement ethical web collection using BeautifulSoup/Selenium
 - Create data collection pipeline with rate limiting using time.sleep()
 - Design metadata extraction using Python JSON processing
 - Implement error handling and retry mechanisms with try/except
@@ -330,7 +330,7 @@ The project has been updated with the latest stable versions of all dependencies
 
 | **Challenge**                    | **Impact Level** | **Python-Based Solution** |
 |----------------------------------|------------------|---------------------------|
-| **Instagram Data Collection**    | **HIGH**         | Instagram Basic Display API + ethical web scraping with BeautifulSoup |
+| **External Data Collection**    | **HIGH**         | Approved platform APIs + ethical web scraping with BeautifulSoup |
 | **Facial Recognition Accuracy**  | **HIGH**         | face_recognition library with dlib's state-of-the-art models |
 | **Free Tier Resource Limits**    | **MEDIUM**       | Efficient NumPy arrays + pandas optimization + intelligent caching |
 | **Real-time Performance**        | **MEDIUM**       | Pre-computed embeddings + SciPy distance calculations + Streamlit caching |
@@ -342,7 +342,7 @@ The project has been updated with the latest stable versions of all dependencies
 
 | **Approach**              | **Implementation**                    | **Benefits** |
 |---------------------------|---------------------------------------|--------------|
-| **API Integration**       | Instagram Basic Display API           | Official access, rate limiting compliance |
+| **API Integration**       | Approved platform API                 | Official access, rate limiting compliance |
 | **Ethical Web Scraping**  | BeautifulSoup + requests with delays  | Backup data source, respectful scraping |
 | **Content Filtering**     | Public content only                   | Privacy compliance, reduced legal risk |
 | **Error Handling**        | Robust try/except with retry logic    | System reliability, graceful degradation |

@@ -1,4 +1,4 @@
-# Quick Start Guide - SocialVision
+# Quick Start Guide - SocialVision (Dec 2025)
 
 **Get up and running in 5 minutes!**
 
@@ -13,10 +13,10 @@
 cd SocialVision-Facial-Recognition-Search
 
 # Build the Docker image (first time: 10-15 min)
-docker-compose build
+docker compose build
 
 # Start the application
-docker-compose up -d
+docker compose up -d
 
 # Or use the automated script
 ./docker-demo.sh
@@ -51,21 +51,21 @@ http://localhost:8501
 
 ```bash
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Stop application
-docker-compose down
+docker compose down
 
 # Restart
-docker-compose restart
+docker compose restart
 
 # Check status
-docker-compose ps
+docker compose ps
 ```
 
 ### Prefer IBM MAX Upscaling (Optional Locally, Enabled in Docker)
 
-`docker-compose up` now starts the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) sidecar (`ibm-max`) automatically and wires `socialvision-app` to it (`IBM_MAX_URL=http://ibm-max:5000`). If `localhost:5000` is already in use, set `IBM_MAX_HOST_PORT` (defaults to `5100`) before running Compose to pick any free port. Apple Silicon hosts should keep `IBM_MAX_PLATFORM=linux/amd64` (the default) so Docker Desktop spins up the x86 image via QEMU; install Rosetta when prompted. For manual/local runs, export the same variables to prefer MAX before the NCNN and native Real-ESRGAN fallbacks:
+`docker compose up` now starts the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) sidecar (`ibm-max`) automatically and wires `socialvision-app` to it (`IBM_MAX_URL=http://ibm-max:5000`). If `localhost:5000` is already in use, set `IBM_MAX_HOST_PORT` (defaults to `5100`) before running Compose to pick any free port. Apple Silicon hosts should keep `IBM_MAX_PLATFORM=linux/amd64` (the default) so Docker Desktop spins up the x86 image via QEMU; install Rosetta when prompted. For manual/local runs, export the same variables to prefer MAX before the Real-ESRGAN fallbacks:
 
 ```bash
 export IBM_MAX_ENABLED=true
@@ -75,9 +75,15 @@ export IBM_MAX_TIMEOUT=180
 export IBM_MAX_PLATFORM=linux/amd64
 ```
 
-> **Apple Silicon tip:** The IBM MAX image is Intel-only. If `ibm-max` keeps restarting with `Illegal instruction`, run `docker compose up -d socialvision` (skipping the sidecar) or set `IBM_MAX_ENABLED=false` so the app immediately falls back to the Real-ESRGAN/NCNN backends. You can still point `IBM_MAX_URL` at a remote MAX instance hosted on an x86 VM if you need IBM-grade previews.
+> **Apple Silicon tip:** The IBM MAX image is Intel-only. If `ibm-max` keeps restarting with `Illegal instruction`, run `docker compose up -d socialvision` (skipping the sidecar) or set `IBM_MAX_ENABLED=false` so the app immediately falls back to the Real-ESRGAN stack, which now auto-tiles even on CPU-only Docker Desktop. You can still point `IBM_MAX_URL` at a remote MAX instance hosted on an x86 VM if you need IBM-grade previews.
 
 If the microservice is temporarily unreachable, set `IBM_MAX_FAILURE_THRESHOLD=1` so the Streamlit process disables IBM MAX after the first failure and immediately jumps to the Real-ESRGAN stack. Leave `IBM_MAX_PROBE_ON_START=true` (default) so the app pings `/model/metadata` once at boot; if the local container is already crash-looping, IBM MAX will be disabled before the first upload. Set it to `false` only when you intentionally rely on a remote endpoint that might take extra time to come online.
+
+### Real-ESRGAN Defaults & Firestore Mode
+
+- `IMAGE_UPSCALING_TARGET_TILES=25` forces roughly a 5×5 grid so every upload benefits from tiled inference even on CPU-constrained Docker.
+- `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE=1.0` keeps Real-ESRGAN active for even minor touch-ups; raise it if you want to skip AI passes for tiny images.
+- To run against Google Firestore instead of the local JSON DB, set `DB_TYPE=firestore`, `FIREBASE_ENABLED=true`, and provide a service account at `config/firebase_config.json` (mount it into the container). The app now auto-provisions the default database/collections when credentials allow.
 ```
 
 ---
@@ -145,10 +151,10 @@ The application will open automatically in your browser.
 docker ps
 
 # View container logs
-docker-compose logs
+docker compose logs
 
 # Rebuild from scratch
-docker-compose build --no-cache
+docker compose build --no-cache
 ```
 
 ### Local Installation Issues
@@ -178,5 +184,5 @@ pip install --upgrade -r requirements.txt
 
 ---
 
-Last Updated: November 2025 (IBM MAX upscaling refresh)
+Last Updated: December 2025 (Real-ESRGAN tiling + Firestore defaults)
 

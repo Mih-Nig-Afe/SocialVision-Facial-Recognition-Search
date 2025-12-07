@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import gc
 import io
+import math
 import subprocess
 import tempfile
 import threading
@@ -51,6 +52,15 @@ REAL_ESRGAN_MODELS = {
         "feat": 64,
         "grow": 32,
     },
+    "realesrgan_x6plus": {
+        "scale": 4,
+        "preferred_outscale": 8,
+        "filename": "RealESRGAN_x4plus.pth",
+        "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+        "blocks": 23,
+        "feat": 64,
+        "grow": 32,
+    },
     "realesrgan_x2plus": {
         "scale": 2,
         "filename": "RealESRGAN_x2plus.pth",
@@ -68,9 +78,10 @@ OPENCV_EDSR_MODEL = {
     "name": "edsr",
 }
 
-# Backend priority: OpenCV first (low memory), then Lanczos fallback
-# Real-ESRGAN disabled by default due to high memory usage on ARM64/Apple Silicon
-DEFAULT_BACKEND_PRIORITY = ("opencv", "lanczos")
+# Backend priority now favors Real-ESRGAN when enough GPU memory (>=12GB) is available
+# with OpenCV and Lanczos as progressively lighter fallbacks.
+SUPPORTED_BACKENDS = ("ibm_max", "ncnn", "realesrgan", "opencv", "lanczos")
+DEFAULT_BACKEND_PRIORITY = ("realesrgan", "opencv", "lanczos")
 
 
 class MaxAPIUpscaler:
@@ -287,6 +298,14 @@ class ImageUpscaler:
         # Default tile size to 256 for memory efficiency (0 = no tiling)
         self.tile = int(getattr(config, "IMAGE_UPSCALING_TILE", 256))
         self.tile_pad = int(getattr(config, "IMAGE_UPSCALING_TILE_PAD", 10))
+        self.max_passes = max(1, int(getattr(config, "IMAGE_UPSCALING_MAX_PASSES", 1)))
+        self.target_tiles = max(
+            0, int(getattr(config, "IMAGE_UPSCALING_TARGET_TILES", 0))
+        )
+        self.min_realesrgan_scale = max(
+            1.0,
+            float(getattr(config, "IMAGE_UPSCALING_MIN_REALESRGAN_SCALE", 1.05)),
+        )
         self.use_half = bool(getattr(config, "IMAGE_UPSCALING_HALF_PRECISION", False))
         priority_raw = getattr(
             config,
@@ -297,9 +316,11 @@ class ImageUpscaler:
 
         self._realesrgan = None
         self._realesrgan_scale = 1
+        self._realesrgan_preferred_outscale = None
         self._opencv_sr = None
         self._opencv_scale = 1
         self._device = "cpu"
+        self._current_tile = max(0, self.tile)
         self._ncnn_client = NCNNUpscaler()
         self._max_client = MaxAPIUpscaler()
         self._last_backend = "uninitialized"
@@ -519,7 +540,7 @@ class ImageUpscaler:
             name = token.strip().lower()
             if not name:
                 continue
-            if name not in DEFAULT_BACKEND_PRIORITY:
+            if name not in SUPPORTED_BACKENDS:
                 logger.warning("Unknown upscaling backend '%s' in priority list", name)
                 continue
             if name not in parsed:
@@ -668,6 +689,8 @@ class ImageUpscaler:
             self._device = "cpu"
             half_precision = False
 
+        self._optimize_realesrgan_for_cpu()
+
         net = RRDBNet(
             num_in_ch=3,
             num_out_ch=3,
@@ -689,6 +712,13 @@ class ImageUpscaler:
                 device=self._device,
             )
             self._realesrgan_scale = model_config["scale"]
+            preferred = model_config.get("preferred_outscale")
+            if preferred:
+                self._realesrgan_preferred_outscale = float(preferred)
+                if self.target_scale < self._realesrgan_preferred_outscale:
+                    self.target_scale = self._realesrgan_preferred_outscale
+            else:
+                self._realesrgan_preferred_outscale = self._realesrgan_scale
             logger.info(
                 "Real-ESRGAN backend initialized (%s, device=%s)",
                 model_path.name,
@@ -740,12 +770,173 @@ class ImageUpscaler:
     def _upscale_with_realesrgan(
         self, image: np.ndarray, outscale: float
     ) -> Optional[np.ndarray]:
+        target = max(1.0, outscale)
+        min_scale = max(1.0, self.min_realesrgan_scale)
+        if target <= min_scale:
+            return self._resize_with_factor(image, target)
+
+        if self._realesrgan_preferred_outscale:
+            target = min(target, self._realesrgan_preferred_outscale)
+
+        self._maybe_adjust_tile_for_image(image.shape[1], image.shape[0])
+
+        current = image
+        accumulated = 1.0
+        passes = 0
+        max_passes = max(1, self.max_passes)
+
+        while passes < max_passes:
+            remaining = target / accumulated
+            if remaining <= min_scale:
+                break
+
+            pass_scale = min(self._realesrgan_scale, remaining)
+            result = self._run_realesrgan_pass(current, pass_scale)
+            if result is None:
+                if passes == 0:
+                    return None
+                break
+
+            width_ratio = result.shape[1] / max(1, current.shape[1])
+            height_ratio = result.shape[0] / max(1, current.shape[0])
+            actual_scale = max(width_ratio, height_ratio, 1.0)
+            accumulated *= actual_scale
+            current = result
+            passes += 1
+
+            if accumulated >= target - 1e-2:
+                break
+
+        if passes == 0:
+            return None
+
+        if accumulated < target - 1e-2:
+            scale_factor = target / accumulated
+            current = self._resize_with_factor(current, scale_factor)
+
+        return current
+
+    def _is_memory_error(self, exc: Exception) -> bool:
+        name = exc.__class__.__name__.lower()
+        if "memory" in name:
+            return True
+        message = str(exc).lower()
+        return "out of memory" in message or "cuda oom" in message
+
+    def _run_realesrgan_pass(
+        self, image: np.ndarray, requested_scale: float
+    ) -> Optional[np.ndarray]:
+        requested_scale = float(requested_scale)
+        requested_scale = max(1.0, min(requested_scale, float(self._realesrgan_scale)))
+
         try:
-            result, _ = self._realesrgan.enhance(image, outscale=outscale)
+            result, _ = self._realesrgan.enhance(image, outscale=requested_scale)
             return result
         except Exception as exc:
-            logger.error("Real-ESRGAN upscaling failed: %s", exc, exc_info=True)
+            if self._is_memory_error(exc) and requested_scale > 2.0:
+                fallback_scale = min(
+                    float(self._realesrgan_scale), max(2.0, requested_scale - 1.0)
+                )
+                logger.warning(
+                    "Real-ESRGAN pass at %sx exhausted memory, retrying at %sx",
+                    requested_scale,
+                    fallback_scale,
+                )
+                try:
+                    result, _ = self._realesrgan.enhance(image, outscale=fallback_scale)
+                    return result
+                except Exception as fallback_exc:
+                    logger.error(
+                        "Real-ESRGAN fallback pass (%sx) failed: %s",
+                        fallback_scale,
+                        fallback_exc,
+                        exc_info=True,
+                    )
+                    return None
+
+            logger.error(
+                "Real-ESRGAN pass failed (%sx): %s",
+                requested_scale,
+                exc,
+                exc_info=True,
+            )
             return None
+
+    def _optimize_realesrgan_for_cpu(self) -> None:
+        if self._device != "cpu":
+            return
+
+        if self.max_passes > 1:
+            logger.info(
+                "CPU detected; limiting Real-ESRGAN to a single pass for responsiveness"
+            )
+            self.max_passes = 1
+
+        if self.target_scale > 4.0:
+            logger.info(
+                "CPU detected; clamping target scale from %.1f to 4.0",
+                self.target_scale,
+            )
+            self.target_scale = 4.0
+
+        if self.target_tiles <= 0:
+            if self.tile == 0 or self.tile < 224:
+                logger.info(
+                    "CPU detected; increasing Real-ESRGAN tile size to 224 for fewer passes"
+                )
+                self.tile = 224
+
+        if self.tile_pad < 12:
+            self.tile_pad = 12
+
+    def _maybe_adjust_tile_for_image(self, width: int, height: int) -> None:
+        if not self._realesrgan or width <= 0 or height <= 0:
+            return
+
+        tile = self._calculate_tile_for_dimensions(width, height)
+        if tile is None:
+            return
+
+        previous = getattr(self._realesrgan, "tile", None)
+        if previous == tile:
+            return
+
+        self._realesrgan.tile = tile
+        self._current_tile = tile
+
+        if self.target_tiles > 0:
+            tiles = self._estimate_tile_count(width, height, tile)
+            logger.info(
+                "Real-ESRGAN tiling set to %dpx (~%d tiles) for %dx%d frame",
+                tile,
+                tiles,
+                width,
+                height,
+            )
+
+    def _calculate_tile_for_dimensions(self, width: int, height: int) -> Optional[int]:
+        tile = max(0, self.tile)
+        desired_tiles = max(0, self.target_tiles)
+
+        if desired_tiles > 0:
+            approx_tile = int(round(((width * height) / float(desired_tiles)) ** 0.5))
+            tile = max(32, approx_tile)
+
+        if tile <= 0:
+            return None
+
+        if self._device == "cpu" and desired_tiles == 0:
+            tile = max(tile, 224)
+
+        return max(32, tile)
+
+    @staticmethod
+    def _estimate_tile_count(width: int, height: int, tile: int) -> int:
+        if tile <= 0:
+            return 1
+        cols = math.ceil(width / tile)
+        rows = math.ceil(height / tile)
+        return max(1, rows * cols)
 
     def _upscale_with_opencv(
         self, image: np.ndarray, outscale: float

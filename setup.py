@@ -12,7 +12,7 @@ setup(
     version="1.0.0",
     author="Mihretab N. Afework",
     author_email="mtabdevt@gmail.com",
-    description="Advanced Facial Recognition Search Engine for Instagram",
+    description="Advanced Facial Recognition Search Engine with auto-training",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Mih-Nig-Afe/SocialVision-Facial-Recognition-Search",
@@ -53,4 +53,3 @@ setup(
         ],
     },
 )
-
