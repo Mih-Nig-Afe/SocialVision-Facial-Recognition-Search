@@ -27,6 +27,7 @@ except ImportError:
 config = get_config()
 DEFAULT_EMBEDDING_SOURCE = getattr(config, "DEFAULT_EMBEDDING_SOURCE", "deepface")
 logger = setup_logger(__name__)
+UPLOAD_EXTENSIONS = sorted({ext.lower() for ext in config.ALLOWED_IMAGE_FORMATS})
 
 
 # Page configuration
@@ -60,6 +61,7 @@ BACKEND_LABELS = {
     "ncnn": "Real-ESRGAN NCNN",
     "realesrgan": "Real-ESRGAN (PyTorch)",
     "opencv": "OpenCV EDSR",
+    "lanczos": "Lanczos Interpolation",
     "resize": "Bicubic Resize",
     "size_guard": "Size Guard (no-op)",
     "no_scale": "No Scaling Needed",
@@ -70,6 +72,11 @@ BACKEND_LABELS = {
 
 def _describe_backend(code: str) -> str:
     return BACKEND_LABELS.get(code, code or "unknown backend")
+
+
+def _infer_temp_suffix(filename: str | None) -> str:
+    suffix = Path(filename or "").suffix
+    return suffix if suffix else ".jpg"
 
 
 @st.cache_resource
@@ -134,9 +141,7 @@ def main():
         col1, col2 = st.columns([2, 1])
 
         with col1:
-            uploaded_file = st.file_uploader(
-                "Upload an image", type=["jpg", "jpeg", "png", "gif", "bmp", "webp"]
-            )
+            uploaded_file = st.file_uploader("Upload an image", type=UPLOAD_EXTENSIONS)
 
         with col2:
             search_button = st.button("🔍 Search", use_container_width=True)
@@ -144,7 +149,8 @@ def main():
         if uploaded_file and search_button:
             with st.spinner("Processing image..."):
                 # Save uploaded file temporarily
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+                suffix = _infer_temp_suffix(uploaded_file.name)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                     tmp.write(uploaded_file.getbuffer())
                     tmp_path = tmp.name
 
@@ -238,7 +244,7 @@ def main():
 
         with col1:
             uploaded_file = st.file_uploader(
-                "Upload image with faces", type=["jpg", "jpeg", "png"], key="add_faces"
+                "Upload image with faces", type=UPLOAD_EXTENSIONS, key="add_faces"
             )
 
         with col2:
@@ -251,8 +257,9 @@ def main():
             else:
                 with st.spinner("Processing..."):
                     # Save temporarily
+                    suffix = _infer_temp_suffix(uploaded_file.name)
                     with tempfile.NamedTemporaryFile(
-                        delete=False, suffix=".jpg"
+                        delete=False, suffix=suffix
                     ) as tmp:
                         tmp.write(uploaded_file.getbuffer())
                         tmp_path = tmp.name

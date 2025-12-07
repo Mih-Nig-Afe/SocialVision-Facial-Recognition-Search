@@ -4,8 +4,8 @@ Image processing utilities
 
 import numpy as np
 from pathlib import Path
-from typing import Optional, Tuple
-from PIL import Image, ImageDraw, ImageFont
+from typing import Callable, Iterable, Optional, Tuple
+from PIL import Image, ImageDraw
 import io
 from src.logger import setup_logger
 from src.config import get_config
@@ -38,19 +38,20 @@ class ImageProcessor:
             Image as numpy array (BGR format) or None
         """
         try:
-            # Try using cv2 first if available
+            decoders = []
             if HAS_CV2:
-                image = cv2.imread(image_path)
-                if image is not None:
-                    logger.info(f"Loaded image: {image_path}")
-                    return image
+                decoders.append(
+                    lambda: ImageProcessor._decode_with_cv2_path(image_path)
+                )
+            decoders.append(lambda: ImageProcessor._decode_with_pillow(image_path))
 
-            # Fallback to PIL
-            pil_image = Image.open(image_path).convert("RGB")
-            # Convert PIL RGB to numpy BGR for compatibility
-            image = np.array(pil_image)
-            image = image[:, :, ::-1]  # RGB to BGR
-            logger.info(f"Loaded image (PIL): {image_path}")
+            image = ImageProcessor._try_decoders(decoders)
+            if image is not None:
+                logger.info(f"Loaded image: {image_path}")
+            else:
+                logger.error(
+                    f"Error loading image: unsupported or corrupted file ({image_path})"
+                )
             return image
         except Exception as e:
             logger.error(f"Error loading image: {e}")
@@ -68,19 +69,21 @@ class ImageProcessor:
             Image as numpy array (BGR format) or None
         """
         try:
+            decoders = []
             if HAS_CV2:
-                nparr = np.frombuffer(image_bytes, np.uint8)
-                image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                if image is None:
-                    logger.error("Failed to decode image from bytes")
-                    return None
-                return image
-            else:
-                # Use PIL for decoding
-                pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-                image = np.array(pil_image)
-                image = image[:, :, ::-1]  # RGB to BGR
-                return image
+                decoders.append(
+                    lambda: ImageProcessor._decode_with_cv2_bytes(image_bytes)
+                )
+
+            def pillow_decode():
+                return ImageProcessor._decode_with_pillow(io.BytesIO(image_bytes))
+
+            decoders.append(pillow_decode)
+
+            image = ImageProcessor._try_decoders(decoders)
+            if image is None:
+                logger.error("Failed to decode image from bytes")
+            return image
         except Exception as e:
             logger.error(f"Error loading image from bytes: {e}")
             return None
@@ -248,13 +251,27 @@ class ImageProcessor:
         """
         try:
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            extension = Path(output_path).suffix.lstrip(".").lower() or "jpg"
 
-            if HAS_CV2:
-                cv2.imwrite(output_path, image, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            if HAS_CV2 and extension in {"jpg", "jpeg", "png"}:
+                params = (
+                    [cv2.IMWRITE_JPEG_QUALITY, quality]
+                    if extension in {"jpg", "jpeg"}
+                    else []
+                )
+                success = cv2.imwrite(output_path, image, params)
+                if not success:
+                    raise ValueError("cv2.imwrite returned False")
             else:
-                # Use PIL for saving
                 pil_image = Image.fromarray(image[:, :, ::-1])  # BGR to RGB
-                pil_image.save(output_path, quality=quality)
+                pil_kwargs = (
+                    {"quality": quality} if extension in {"jpg", "jpeg", "webp"} else {}
+                )
+                pil_image.save(
+                    output_path,
+                    format=ImageProcessor._normalize_pil_format(extension),
+                    **pil_kwargs,
+                )
 
             logger.info(f"Saved image: {output_path}")
             return True
@@ -336,20 +353,26 @@ class ImageProcessor:
             Image as bytes
         """
         try:
-            if HAS_CV2:
-                if format.lower() == "jpg":
-                    _, buffer = cv2.imencode(
-                        ".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85]
-                    )
-                else:
-                    _, buffer = cv2.imencode(".png", image)
+            fmt = (format or "jpg").lower()
+            if HAS_CV2 and fmt in {"jpg", "jpeg", "png"}:
+                ext = ".jpg" if fmt in {"jpg", "jpeg"} else ".png"
+                params = (
+                    [cv2.IMWRITE_JPEG_QUALITY, 85] if fmt in {"jpg", "jpeg"} else []
+                )
+                ok, buffer = cv2.imencode(ext, image, params)
+                if not ok:
+                    raise ValueError("cv2.imencode failed")
                 return buffer.tobytes()
-            else:
-                # Use PIL for encoding
-                pil_image = Image.fromarray(image[:, :, ::-1])  # BGR to RGB
-                buffer = io.BytesIO()
-                pil_image.save(buffer, format=format.upper(), quality=85)
-                return buffer.getvalue()
+
+            pil_image = Image.fromarray(image[:, :, ::-1])  # BGR to RGB
+            buffer = io.BytesIO()
+            pil_kwargs = {"quality": 85} if fmt in {"jpg", "jpeg", "webp"} else {}
+            pil_image.save(
+                buffer,
+                format=ImageProcessor._normalize_pil_format(fmt),
+                **pil_kwargs,
+            )
+            return buffer.getvalue()
         except Exception as e:
             logger.error(f"Error converting image to bytes: {e}")
             return b""
@@ -400,3 +423,69 @@ class ImageProcessor:
         except Exception as e:
             logger.error(f"Error validating image: {e}")
             return False, str(e)
+
+    @staticmethod
+    def _try_decoders(
+        decoders: Iterable[Callable[[], Optional[np.ndarray]]],
+    ) -> Optional[np.ndarray]:
+        for decode in decoders:
+            try:
+                image = decode()
+            except Exception as exc:
+                logger.debug(f"Decoder failed: {exc}")
+                continue
+            if image is not None:
+                return image
+        return None
+
+    @staticmethod
+    def _decode_with_cv2_path(image_path: str) -> Optional[np.ndarray]:
+        if not HAS_CV2:
+            return None
+        image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        return image
+
+    @staticmethod
+    def _decode_with_cv2_bytes(image_bytes: bytes) -> Optional[np.ndarray]:
+        if not HAS_CV2:
+            return None
+        if not image_bytes:
+            return None
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        if nparr.size == 0:
+            return None
+        return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    @staticmethod
+    def _decode_with_pillow(source) -> Optional[np.ndarray]:
+        try:
+            if isinstance(source, io.BytesIO):
+                source.seek(0)
+            with Image.open(source) as pil_image:
+                if getattr(pil_image, "is_animated", False):
+                    pil_image.seek(0)
+                rgb_image = pil_image.convert("RGB")
+                data = np.array(rgb_image)
+                return data[:, :, ::-1]
+        except Exception as exc:
+            logger.debug(f"Pillow decode failed: {exc}")
+            return None
+
+    @staticmethod
+    def _normalize_pil_format(extension: str) -> str:
+        mapping = {
+            "jpg": "JPEG",
+            "jpeg": "JPEG",
+            "png": "PNG",
+            "gif": "GIF",
+            "bmp": "BMP",
+            "webp": "WEBP",
+            "tiff": "TIFF",
+            "tif": "TIFF",
+            "ico": "ICO",
+            "ppm": "PPM",
+            "pgm": "PPM",
+            "pbm": "PPM",
+        }
+        normalized = mapping.get(extension.lower(), extension.upper())
+        return normalized or "JPEG"

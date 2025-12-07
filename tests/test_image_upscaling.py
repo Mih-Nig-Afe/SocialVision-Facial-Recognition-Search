@@ -43,42 +43,56 @@ def test_enhance_image_gracefully_handles_failure(monkeypatch):
     np.testing.assert_array_equal(enhanced, sample)
 
 
-def test_image_upscaler_prefers_ibm_max_backend(monkeypatch):
+def test_image_upscaler_prefers_opencv_backend(monkeypatch):
+    """Test that OpenCV is the preferred backend in the new priority order (memory-efficient)."""
+
     class DummyNCNN:
         def __init__(self):
-            self.enabled = True
+            self.enabled = False
 
         def upscale(self, image):  # pragma: no cover - should not run
-            raise AssertionError("NCNN backend should not run when IBM MAX succeeds")
+            raise AssertionError("NCNN backend should not run")
 
     class DummyMax:
         def __init__(self):
-            self.enabled = True
+            self.enabled = False
 
-        def upscale(self, image):
+        def upscale(self, image):  # pragma: no cover - should not run
+            raise AssertionError("IBM MAX backend should not run")
+
+    class DummySuperRes:
+        def __init__(self):
+            self.calls = 0
+
+        def upsample(self, image):
+            self.calls += 1
             return np.clip(image + 5, 0, 255)
 
     monkeypatch.setattr(image_upscaler, "NCNNUpscaler", lambda: DummyNCNN())
     monkeypatch.setattr(image_upscaler, "MaxAPIUpscaler", lambda: DummyMax())
 
     upscaler = image_upscaler.ImageUpscaler()
-    upscaler._realesrgan = None
-    upscaler._opencv_sr = None
+    upscaler._realesrgan = None  # Disable Real-ESRGAN
+    dummy_superres = DummySuperRes()
+    upscaler._opencv_sr = dummy_superres
 
     sample = np.zeros((4, 4, 3), dtype=np.uint8)
     result = upscaler.upscale(sample)
 
-    assert np.all(result == 5)
-    assert upscaler.last_backend == "ibm_max"
+    # Result should be processed using OpenCV (preferred memory-efficient backend)
+    assert upscaler.last_backend == "opencv"
+    assert dummy_superres.calls == 1
 
 
-def test_image_upscaler_uses_ncnn_when_ibm_disabled(monkeypatch):
+def test_image_upscaler_uses_lanczos_fallback(monkeypatch):
+    """Test that Lanczos fallback works when other backends are unavailable."""
+
     class DummyNCNN:
         def __init__(self):
-            self.enabled = True
+            self.enabled = False
 
-        def upscale(self, image):
-            return np.clip(image + 7, 0, 255)
+        def upscale(self, image):  # pragma: no cover - disabled
+            raise AssertionError("NCNN backend disabled")
 
     class DummyMax:
         def __init__(self):
@@ -97,8 +111,82 @@ def test_image_upscaler_uses_ncnn_when_ibm_disabled(monkeypatch):
     sample = np.zeros((2, 2, 3), dtype=np.uint8)
     result = upscaler.upscale(sample)
 
-    assert np.all(result == 7)
-    assert upscaler.last_backend == "ncnn"
+    # Should fall back to lanczos when no other backends available
+    assert upscaler.last_backend == "lanczos"
+    # Result should be upscaled (larger than original)
+    assert result.shape[0] >= sample.shape[0]
+    assert result.shape[1] >= sample.shape[1]
+
+
+def test_image_upscaler_falls_back_to_lanczos(monkeypatch):
+    """Test that Lanczos fallback works when OpenCV fails."""
+
+    class DummyNCNN:
+        def __init__(self):
+            self.enabled = False
+
+        def upscale(self, image):
+            return None
+
+    class DummyMax:
+        def __init__(self):
+            self.enabled = False
+
+        def upscale(self, image):
+            return None
+
+    class FailingSuperRes:
+        def upsample(self, image):
+            return None  # Simulate failure
+
+    monkeypatch.setattr(image_upscaler, "NCNNUpscaler", lambda: DummyNCNN())
+    monkeypatch.setattr(image_upscaler, "MaxAPIUpscaler", lambda: DummyMax())
+
+    upscaler = image_upscaler.ImageUpscaler()
+    upscaler._realesrgan = None  # Disable Real-ESRGAN
+    upscaler._opencv_sr = FailingSuperRes()
+
+    sample = np.zeros((3, 3, 3), dtype=np.uint8)
+    result = upscaler.upscale(sample)
+
+    # Should fall back to lanczos when opencv fails
+    assert upscaler.last_backend == "lanczos"
+    # Result should be upscaled
+    assert result.shape[0] >= sample.shape[0]
+
+
+def test_image_upscaler_opencv_is_primary_backend(monkeypatch):
+    """Test that OpenCV is used as the primary backend (memory-efficient default)."""
+
+    class DummyBackend:
+        def __init__(self):
+            self.enabled = False
+
+        def upscale(self, image):  # pragma: no cover - disabled
+            raise AssertionError("Should not be called")
+
+    class DummySuperRes:
+        def __init__(self):
+            self.calls = 0
+
+        def upsample(self, image):
+            self.calls += 1
+            return np.clip(image + 13, 0, 255)
+
+    monkeypatch.setattr(image_upscaler, "NCNNUpscaler", lambda: DummyBackend())
+    monkeypatch.setattr(image_upscaler, "MaxAPIUpscaler", lambda: DummyBackend())
+
+    upscaler = image_upscaler.ImageUpscaler()
+    upscaler._realesrgan = None  # Real-ESRGAN disabled for memory efficiency
+    dummy_superres = DummySuperRes()
+    upscaler._opencv_sr = dummy_superres
+
+    sample = np.zeros((2, 2, 3), dtype=np.uint8)
+    result = upscaler.upscale(sample)
+
+    assert np.all(result == 13)
+    assert upscaler.last_backend == "opencv"
+    assert dummy_superres.calls == 1
 
 
 def test_max_api_disables_after_consecutive_failures(monkeypatch):

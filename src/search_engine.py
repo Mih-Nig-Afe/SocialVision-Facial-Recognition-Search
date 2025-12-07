@@ -16,7 +16,7 @@ DEFAULT_EMBEDDING_SOURCE = getattr(config, "DEFAULT_EMBEDDING_SOURCE", "deepface
 
 
 class SearchEngine:
-    """Facial recognition search engine"""
+    """Facial recognition search engine with multi-backend extraction support."""
 
     def __init__(self, database: FaceDatabase):
         """
@@ -27,7 +27,59 @@ class SearchEngine:
         """
         self.database = database
         self.face_engine = FaceRecognitionEngine()
+        self._multi_extractor = None
+        self._multi_extractor_initialized = False
         logger.info("Initialized SearchEngine")
+
+    @property
+    def multi_extractor(self):
+        """Lazy-load the multi-backend extractor."""
+        if self._multi_extractor is None and not self._multi_extractor_initialized:
+            try:
+                from src.multi_extraction import get_multi_extractor
+
+                self._multi_extractor = get_multi_extractor(self.face_engine)
+                self._multi_extractor_initialized = True
+            except Exception as exc:
+                logger.warning("Failed to initialize multi-extractor: %s", exc)
+                self._multi_extractor_initialized = True
+        return self._multi_extractor
+
+    def _extract_with_multi_backend(
+        self, image: np.ndarray, source: str = "unknown"
+    ) -> List[Dict]:
+        """
+        Extract embeddings using multi-backend strategy.
+
+        Tries original image first, then each upscaling backend,
+        aggregating all successful extractions.
+        """
+        # Check if multi-backend extraction is enabled
+        multi_enabled = getattr(config, "MULTI_BACKEND_EXTRACTION", True)
+
+        if multi_enabled and self.multi_extractor:
+            try:
+                embeddings, metadata = self.multi_extractor.extract_all_embeddings(
+                    image, source
+                )
+                if embeddings:
+                    logger.info(
+                        "Multi-backend extraction: %d embeddings from %s",
+                        len(embeddings),
+                        metadata.get("backends_succeeded", []),
+                    )
+                    return embeddings
+            except Exception as exc:
+                logger.warning("Multi-backend extraction failed: %s", exc)
+
+        # Fallback to standard single extraction
+        logger.info("Using standard single-backend extraction")
+        face_locations = self.face_engine.detect_faces(image)
+        if not face_locations:
+            return []
+
+        embeddings = self.face_engine.extract_face_embeddings(image, face_locations)
+        return embeddings if embeddings else []
 
     @staticmethod
     def _serialize_embedding_bundle(embedding: Any) -> Optional[Dict[str, List[float]]]:
@@ -230,20 +282,17 @@ class SearchEngine:
         profile and return a structured summary. If no match found, returns
         {"result": "Person not found."}.
 
-        This method focuses on enrichment: it makes the matched user's stored
-        embeddings broader and more representative over time.
+        This method now uses multi-backend extraction:
+        1. Extract from original image first
+        2. Try each upscaling backend and extract from each
+        3. Aggregate all embeddings for better matching and enrichment
         """
         try:
-            # Detect faces
-            face_locations = self.face_engine.detect_faces(image)
-            if not face_locations:
-                logger.warning("No faces detected for enrichment")
-                return {"result": "Person not found."}
+            # Use multi-backend extraction for robust embedding extraction
+            embeddings = self._extract_with_multi_backend(image, source)
 
-            # Extract embeddings for faces (we will use the first face for identity search)
-            embeddings = self.face_engine.extract_face_embeddings(image, face_locations)
-            if embeddings is None or len(embeddings) == 0:
-                logger.warning("No embeddings extracted for enrichment")
+            if not embeddings:
+                logger.warning("No embeddings extracted from any backend")
                 return {"result": "Person not found."}
 
             # Ensure embeddings is a 2D array/list; take first embedding for identification

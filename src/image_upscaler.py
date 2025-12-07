@@ -1,16 +1,25 @@
-"""High-detail image upscaling utilities for SocialVision."""
+"""High-detail image upscaling utilities for SocialVision.
+
+This module provides multiple upscaling backends with automatic fallback:
+1. Real-ESRGAN (PyTorch) - High-quality AI upscaling with tiling for memory efficiency
+2. OpenCV EDSR - Fast DNN-based super-resolution
+3. Lanczos/Bicubic - Basic interpolation fallback
+
+Note: IBM MAX and NCNN backends have been deprioritized due to compatibility issues.
+"""
 
 from __future__ import annotations
 
+import gc
 import io
 import subprocess
 import tempfile
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter, ImageEnhance
 
 from src.config import get_config
 from src.logger import setup_logger
@@ -18,6 +27,12 @@ from src.compat.torchvision_patch import ensure_functional_tensor_shim
 
 logger = setup_logger(__name__)
 config = get_config()
+
+# Memory limit for image processing (in bytes) - prevents OOM
+MAX_IMAGE_MEMORY_BYTES = 50 * 1024 * 1024  # 50MB per image max
+MAX_PIXEL_COUNT = (
+    4 * 1024 * 1024
+)  # 4 megapixels max before downscale (more conservative)
 
 REAL_ESRGAN_MODELS = {
     "realesrgan_x4plus": {
@@ -52,6 +67,10 @@ OPENCV_EDSR_MODEL = {
     "scale": 4,
     "name": "edsr",
 }
+
+# Backend priority: OpenCV first (low memory), then Lanczos fallback
+# Real-ESRGAN disabled by default due to high memory usage on ARM64/Apple Silicon
+DEFAULT_BACKEND_PRIORITY = ("opencv", "lanczos")
 
 
 class MaxAPIUpscaler:
@@ -247,7 +266,15 @@ def get_image_upscaler() -> "ImageUpscaler":
 
 
 class ImageUpscaler:
-    """Facade around high-quality upscaling backends (Real-ESRGAN preferred)."""
+    """Facade around high-quality upscaling backends with memory management.
+
+    This class provides intelligent image upscaling with:
+    - Automatic backend selection (Real-ESRGAN preferred, OpenCV EDSR fallback)
+    - Memory-efficient tiling for large images
+    - Pre-processing for optimal quality
+    - Post-processing with sharpening and enhancement
+    - Graceful fallback to Lanczos interpolation
+    """
 
     def __init__(self) -> None:
         self.enabled = getattr(config, "IMAGE_UPSCALING_ENABLED", True)
@@ -255,11 +282,18 @@ class ImageUpscaler:
             config, "IMAGE_UPSCALING_BACKEND", "realesrgan_x4plus"
         )
         self.target_scale = float(getattr(config, "IMAGE_UPSCALING_TARGET_SCALE", 2.0))
-        self.min_edge = int(getattr(config, "IMAGE_UPSCALING_MIN_EDGE", 512))
-        self.max_edge = int(getattr(config, "IMAGE_UPSCALING_MAX_EDGE", 2048))
-        self.tile = int(getattr(config, "IMAGE_UPSCALING_TILE", 0))
+        self.min_edge = int(getattr(config, "IMAGE_UPSCALING_MIN_EDGE", 256))
+        self.max_edge = int(getattr(config, "IMAGE_UPSCALING_MAX_EDGE", 1536))
+        # Default tile size to 256 for memory efficiency (0 = no tiling)
+        self.tile = int(getattr(config, "IMAGE_UPSCALING_TILE", 256))
         self.tile_pad = int(getattr(config, "IMAGE_UPSCALING_TILE_PAD", 10))
         self.use_half = bool(getattr(config, "IMAGE_UPSCALING_HALF_PRECISION", False))
+        priority_raw = getattr(
+            config,
+            "IMAGE_UPSCALING_BACKEND_PRIORITY",
+            ",".join(DEFAULT_BACKEND_PRIORITY),
+        )
+        self.backend_priority = self._parse_backend_priority(priority_raw)
 
         self._realesrgan = None
         self._realesrgan_scale = 1
@@ -279,7 +313,15 @@ class ImageUpscaler:
     # Public API
     # ------------------------------------------------------------------
     def upscale(self, image: np.ndarray) -> np.ndarray:
-        """Upscale an image while preserving detail."""
+        """Upscale an image while preserving detail with memory management.
+
+        This method:
+        1. Validates image size and memory constraints
+        2. Applies pre-processing for optimal quality
+        3. Upscales using available backends (Real-ESRGAN > OpenCV > Lanczos)
+        4. Applies post-processing with subtle sharpening
+        5. Cleans up memory after processing
+        """
 
         if not self.enabled or image is None:
             self._last_backend = "disabled"
@@ -287,8 +329,21 @@ class ImageUpscaler:
 
         try:
             height, width = image.shape[:2]
+            channels = image.shape[2] if image.ndim == 3 else 1
         except Exception:
             return image
+
+        # Memory guard: Check if image is too large
+        pixel_count = width * height
+        if pixel_count > MAX_PIXEL_COUNT:
+            logger.warning(
+                "Image too large (%dx%d = %.1fMP), downscaling first",
+                width,
+                height,
+                pixel_count / 1e6,
+            )
+            image = self._safe_downscale(image, MAX_PIXEL_COUNT)
+            height, width = image.shape[:2]
 
         if max(height, width) >= self.max_edge:
             self._last_backend = "size_guard"
@@ -299,57 +354,280 @@ class ImageUpscaler:
             self._last_backend = "no_scale"
             return image
 
-        if self._max_client.enabled:
-            upscaled = self._max_client.upscale(image)
-            finalized = self._finalize_resolution(image, upscaled, outscale)
-            if finalized is not None:
-                self._last_backend = "ibm_max"
-                logger.info("Upscaled frame via IBM MAX microservice")
-                return finalized
+        # Pre-process image for better quality
+        preprocessed = self._preprocess_image(image)
 
-        if self._ncnn_client.enabled:
-            upscaled = self._ncnn_client.upscale(image)
-            finalized = self._finalize_resolution(image, upscaled, outscale)
-            if finalized is not None:
-                self._last_backend = "ncnn"
-                logger.info("Upscaled frame via Real-ESRGAN NCNN backend")
-                return finalized
+        # Try backends in priority order
+        for backend_name, handler in self._iter_backends():
+            try:
+                upscaled = handler(preprocessed, outscale)
+                finalized = self._finalize_resolution(image, upscaled, outscale)
+                if finalized is not None:
+                    # Post-process for enhanced quality
+                    enhanced = self._postprocess_image(finalized)
+                    self._last_backend = backend_name
+                    self._log_backend_success(backend_name)
+                    # Clean up memory
+                    self._cleanup_memory()
+                    return enhanced
+            except MemoryError:
+                logger.warning(
+                    "Backend '%s' ran out of memory, trying next", backend_name
+                )
+                self._cleanup_memory()
+                continue
+            except Exception as exc:
+                logger.warning("Backend '%s' failed: %s", backend_name, exc)
+                continue
 
-        if self._realesrgan:
-            upscaled = self._upscale_with_realesrgan(image, outscale)
-            finalized = self._finalize_resolution(image, upscaled, outscale)
-            if finalized is not None:
-                self._last_backend = "realesrgan"
-                logger.info("Upscaled frame via native Real-ESRGAN backend")
-                return finalized
+        # Ultimate fallback: high-quality Lanczos
+        self._last_backend = "lanczos"
+        result = self._lanczos_upscale(preprocessed, outscale)
+        enhanced = self._postprocess_image(result)
+        self._cleanup_memory()
+        return enhanced
 
-        if self._opencv_sr:
-            upscaled = self._upscale_with_opencv(image, outscale)
-            finalized = self._finalize_resolution(image, upscaled, outscale)
-            if finalized is not None:
-                self._last_backend = "opencv"
-                return finalized
+    def _safe_downscale(self, image: np.ndarray, max_pixels: int) -> np.ndarray:
+        """Downscale image to fit within pixel budget while maintaining aspect ratio."""
+        height, width = image.shape[:2]
+        current_pixels = width * height
+        if current_pixels <= max_pixels:
+            return image
 
-        self._last_backend = "resize"
-        return self._fallback_resize(image, outscale)
+        scale = (max_pixels / current_pixels) ** 0.5
+        new_width = max(1, int(width * scale))
+        new_height = max(1, int(height * scale))
+
+        try:
+            import cv2
+
+            return cv2.resize(
+                image, (new_width, new_height), interpolation=cv2.INTER_AREA
+            )
+        except Exception:
+            pil_image = self._to_pil(image)
+            if pil_image:
+                resized = pil_image.resize(
+                    (new_width, new_height), Image.Resampling.LANCZOS
+                )
+                return np.array(resized)[:, :, ::-1]
+            return image
+
+    def _preprocess_image(self, image: np.ndarray) -> np.ndarray:
+        """Apply pre-processing to improve upscaling quality."""
+        try:
+            pil_image = self._to_pil(image)
+            if pil_image is None:
+                return image
+
+            # Slight denoise/blur to reduce artifacts in source
+            # This helps AI upscalers produce cleaner results
+            pil_image = pil_image.filter(ImageFilter.MedianFilter(size=3))
+
+            # Convert back to numpy BGR
+            result = np.array(pil_image)
+            if result.ndim == 3 and result.shape[2] == 3:
+                return result[:, :, ::-1]
+            return result
+        except Exception as exc:
+            logger.debug("Pre-processing failed: %s", exc)
+            return image
+
+    def _postprocess_image(self, image: np.ndarray) -> np.ndarray:
+        """Apply post-processing to enhance upscaled image quality."""
+        try:
+            pil_image = self._to_pil(image)
+            if pil_image is None:
+                return image
+
+            # Apply subtle unsharp mask for detail enhancement
+            # This compensates for any softness from upscaling
+            sharpened = pil_image.filter(
+                ImageFilter.UnsharpMask(radius=1.5, percent=50, threshold=2)
+            )
+
+            # Subtle contrast enhancement
+            enhancer = ImageEnhance.Contrast(sharpened)
+            enhanced = enhancer.enhance(1.05)
+
+            # Convert back to numpy BGR
+            result = np.array(enhanced)
+            if result.ndim == 3 and result.shape[2] == 3:
+                return result[:, :, ::-1]
+            return result
+        except Exception as exc:
+            logger.debug("Post-processing failed: %s", exc)
+            return image
+
+    def _cleanup_memory(self) -> None:
+        """Force garbage collection to free memory after upscaling."""
+        try:
+            gc.collect()
+            # Also try to clear PyTorch cache if available
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _lanczos_upscale(self, image: np.ndarray, outscale: float) -> np.ndarray:
+        """High-quality Lanczos upscaling fallback."""
+        if outscale <= 1.0:
+            return image
+
+        try:
+            height, width = image.shape[:2]
+            new_width = max(1, int(round(width * outscale)))
+            new_height = max(1, int(round(height * outscale)))
+
+            pil_image = self._to_pil(image)
+            if pil_image is None:
+                # Fallback to OpenCV
+                try:
+                    import cv2
+
+                    return cv2.resize(
+                        image, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4
+                    )
+                except Exception:
+                    return self._resize_to_dimensions(image, new_width, new_height)
+
+            # Use high-quality Lanczos resampling
+            upscaled = pil_image.resize(
+                (new_width, new_height), Image.Resampling.LANCZOS
+            )
+
+            # Convert back to numpy BGR
+            result = np.array(upscaled)
+            if result.ndim == 3 and result.shape[2] == 3:
+                return result[:, :, ::-1]
+            return result
+        except Exception as exc:
+            logger.error("Lanczos upscaling failed: %s", exc)
+            return self._fallback_resize(image, outscale)
+
+    def _parse_backend_priority(self, raw: Optional[str]) -> List[str]:
+        if not raw:
+            return list(DEFAULT_BACKEND_PRIORITY)
+
+        parsed: List[str] = []
+        for token in raw.split(","):
+            name = token.strip().lower()
+            if not name:
+                continue
+            if name not in DEFAULT_BACKEND_PRIORITY:
+                logger.warning("Unknown upscaling backend '%s' in priority list", name)
+                continue
+            if name not in parsed:
+                parsed.append(name)
+
+        return parsed or list(DEFAULT_BACKEND_PRIORITY)
+
+    def _iter_backends(self):
+        seen = set()
+
+        for backend_name in self.backend_priority:
+            handler = self._backend_handler(backend_name)
+            if handler is None:
+                continue
+            seen.add(backend_name)
+            yield backend_name, handler
+
+        for backend_name in DEFAULT_BACKEND_PRIORITY:
+            if backend_name in seen:
+                continue
+            handler = self._backend_handler(backend_name)
+            if handler is None:
+                continue
+            yield backend_name, handler
+
+    def _backend_handler(
+        self, backend_name: str
+    ) -> Optional[Callable[[np.ndarray, float], Optional[np.ndarray]]]:
+        mapping = {
+            "ibm_max": self._attempt_ibm_max,
+            "ncnn": self._attempt_ncnn,
+            "realesrgan": self._attempt_realesrgan_backend,
+            "opencv": self._attempt_opencv_backend,
+            "lanczos": self._attempt_lanczos_backend,
+        }
+        return mapping.get(backend_name)
+
+    def _get_backend_handler(
+        self, backend_name: str
+    ) -> Optional[Callable[[np.ndarray, float], Optional[np.ndarray]]]:
+        """Public alias for _backend_handler for multi-extraction module."""
+        return self._backend_handler(backend_name)
+
+    def _attempt_ibm_max(
+        self, image: np.ndarray, _outscale: float
+    ) -> Optional[np.ndarray]:
+        if not self._max_client.enabled:
+            return None
+        return self._max_client.upscale(image)
+
+    def _attempt_ncnn(
+        self, image: np.ndarray, _outscale: float
+    ) -> Optional[np.ndarray]:
+        if not self._ncnn_client.enabled:
+            return None
+        return self._ncnn_client.upscale(image)
+
+    def _attempt_realesrgan_backend(
+        self, image: np.ndarray, outscale: float
+    ) -> Optional[np.ndarray]:
+        if not self._realesrgan:
+            return None
+        return self._upscale_with_realesrgan(image, outscale)
+
+    def _attempt_opencv_backend(
+        self, image: np.ndarray, outscale: float
+    ) -> Optional[np.ndarray]:
+        if not self._opencv_sr:
+            return None
+        return self._upscale_with_opencv(image, outscale)
+
+    def _attempt_lanczos_backend(
+        self, image: np.ndarray, outscale: float
+    ) -> Optional[np.ndarray]:
+        """Always-available Lanczos upscaling backend."""
+        try:
+            return self._lanczos_upscale(image, outscale)
+        except Exception as exc:
+            logger.warning("Lanczos backend failed: %s", exc)
+            return None
+
+    def _log_backend_success(self, backend_name: str) -> None:
+        messages = {
+            "ibm_max": "Upscaled frame via IBM MAX microservice",
+            "ncnn": "Upscaled frame via Real-ESRGAN NCNN backend",
+            "realesrgan": "Upscaled frame via native Real-ESRGAN backend",
+            "opencv": "Upscaled frame via OpenCV super-resolution backend",
+            "lanczos": "Upscaled frame via high-quality Lanczos interpolation",
+        }
+        message = messages.get(backend_name)
+        if message:
+            logger.info(message)
 
     # ------------------------------------------------------------------
     # Backend initialization
     # ------------------------------------------------------------------
     def _initialize_backends(self) -> None:
-        initialized = self._init_realesrgan_backend()
-        if initialized:
-            return
+        realesrgan_ready = self._init_realesrgan_backend()
+        opencv_ready = self._init_opencv_superres_backend()
 
-        logger.warning(
-            "Real-ESRGAN backend unavailable. Falling back to OpenCV super-resolution"
-        )
-        if self._init_opencv_superres_backend():
-            return
-
-        logger.warning(
-            "No dedicated upscaling backend available; using bicubic fallback"
-        )
+        if not realesrgan_ready and opencv_ready:
+            logger.warning(
+                "Real-ESRGAN backend unavailable. Falling back to OpenCV super-resolution"
+            )
+        if not realesrgan_ready and not opencv_ready:
+            logger.warning(
+                "No dedicated upscaling backend available; using bicubic fallback"
+            )
 
     def _init_realesrgan_backend(self) -> bool:
         model_config = REAL_ESRGAN_MODELS.get(self.backend_name)

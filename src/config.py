@@ -65,7 +65,23 @@ class Config:
 
     # Image processing settings
     MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", "10485760"))  # 10MB
-    ALLOWED_IMAGE_FORMATS = {"jpg", "jpeg", "png", "gif", "bmp", "webp"}
+    # Comprehensive image format support
+    ALLOWED_IMAGE_FORMATS = {
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "bmp",
+        "webp",
+        "tiff",
+        "tif",
+        "heic",
+        "heif",
+        "ico",
+        "ppm",
+        "pgm",
+        "pbm",
+    }
     IMAGE_QUALITY = int(os.getenv("IMAGE_QUALITY", "85"))
     IMAGE_UPSCALING_ENABLED = (
         os.getenv("IMAGE_UPSCALING_ENABLED", "True").lower() == "true"
@@ -81,12 +97,22 @@ class Config:
     IMAGE_UPSCALING_HALF_PRECISION = (
         os.getenv("IMAGE_UPSCALING_HALF_PRECISION", "False").lower() == "true"
     )
-    IBM_MAX_ENABLED = os.getenv("IBM_MAX_ENABLED", "False").lower() == "true"
-    IBM_MAX_URL = os.getenv("IBM_MAX_URL")
-    IBM_MAX_TIMEOUT = float(os.getenv("IBM_MAX_TIMEOUT", "120"))
-    IBM_MAX_FAILURE_THRESHOLD = int(os.getenv("IBM_MAX_FAILURE_THRESHOLD", "3"))
+    # Multi-backend extraction: try all upscaling backends and aggregate embeddings
+    MULTI_BACKEND_EXTRACTION = (
+        os.getenv("MULTI_BACKEND_EXTRACTION", "True").lower() == "true"
+    )
+    # Backend priority: OpenCV first (low memory), then Lanczos fallback
+    # Real-ESRGAN disabled by default due to high memory usage on ARM64/Apple Silicon
+    IMAGE_UPSCALING_BACKEND_PRIORITY = os.getenv(
+        "IMAGE_UPSCALING_BACKEND_PRIORITY",
+        "opencv,lanczos",
+    )
+    IBM_MAX_ENABLED = os.getenv("IBM_MAX_ENABLED", "True").lower() == "true"
+    IBM_MAX_URL = os.getenv("IBM_MAX_URL", "http://ibm-max:5000")
+    IBM_MAX_TIMEOUT = float(os.getenv("IBM_MAX_TIMEOUT", "60"))
+    IBM_MAX_FAILURE_THRESHOLD = int(os.getenv("IBM_MAX_FAILURE_THRESHOLD", "2"))
     IBM_MAX_PROBE_ON_START = (
-        os.getenv("IBM_MAX_PROBE_ON_START", "True").lower() == "true"
+        os.getenv("IBM_MAX_PROBE_ON_START", "False").lower() == "true"
     )
     NCNN_UPSCALING_ENABLED = (
         os.getenv("NCNN_UPSCALING_ENABLED", "False").lower() == "true"

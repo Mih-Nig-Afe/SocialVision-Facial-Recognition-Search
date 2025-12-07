@@ -1,19 +1,28 @@
+# SocialVision Docker Compose Configuration
+# Multi-backend upscaling with Real-ESRGAN, OpenCV, and Lanczos fallback
+# IBM MAX is disabled by default (incompatible with ARM64/Apple Silicon)
+
 services:
-  ibm-max:
-    image: codait/max-image-resolution-enhancer:latest
-    container_name: ibm-max
-    platform: ${IBM_MAX_PLATFORM:-linux/amd64}
-    restart: unless-stopped
-    ports:
-      - "${IBM_MAX_HOST_PORT:-5100}:5000"
-    networks:
-      - socialvision-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/model/metadata"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
+  # IBM MAX Image Resolution Enhancer (DISABLED - x86 only)
+  # Uncomment on x86 systems if you want IBM MAX upscaling
+  # ibm-max:
+  #   image: quay.io/codait/max-image-resolution-enhancer
+  #   container_name: ibm-max
+  #   ports:
+  #     - "5100:5000"  # Use 5100 externally (5000 often used by AirPlay on macOS)
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2G
+  #       reservations:
+  #         memory: 512M
+  #   restart: on-failure:3
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:5000/model/metadata"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 120s
 
   socialvision:
     build:
@@ -46,18 +55,39 @@ services:
       - FIRESTORE_DATABASE_ID=(default)
       - FIRESTORE_LOCATION_ID=us-central
       - FIREBASE_CONFIG_PATH=/app/config/firebase_config.json
-      - IBM_MAX_ENABLED=${IBM_MAX_ENABLED:-true}
-      - IBM_MAX_URL=${IBM_MAX_URL:-http://ibm-max:5000}
-      - IBM_MAX_TIMEOUT=${IBM_MAX_TIMEOUT:-180}
-    networks:
-      - socialvision-network
+      # IBM MAX disabled on ARM64/Apple Silicon (enable on x86 systems)
+      - IBM_MAX_ENABLED=false
+      - IBM_MAX_URL=http://ibm-max:5000
+      - IBM_MAX_TIMEOUT=60
+      - IBM_MAX_PROBE_ON_START=false
+      - IBM_MAX_FAILURE_THRESHOLD=2
+      # Multi-backend extraction: try all backends, aggregate results
+      - MULTI_BACKEND_EXTRACTION=true
+      - IMAGE_UPSCALING_ENABLED=true
+      # Use OpenCV EDSR as default (much less memory than Real-ESRGAN)
+      - IMAGE_UPSCALING_BACKEND=opencv
+      # Fallback chain: OpenCV -> Lanczos (Real-ESRGAN disabled due to high memory)
+      - IMAGE_UPSCALING_BACKEND_PRIORITY=opencv,lanczos
+      # Memory-efficient settings
+      - IMAGE_UPSCALING_TILE=0
+      - IMAGE_UPSCALING_TILE_PAD=10
+      - IMAGE_UPSCALING_TARGET_SCALE=2.0
+      - IMAGE_UPSCALING_MIN_EDGE=256
+      - IMAGE_UPSCALING_MAX_EDGE=1024
+    # No memory limits - use all available system resources
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 6G
+    #     reservations:
+    #       memory: 2G
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 90s
 
 networks:
   socialvision-network:
