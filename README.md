@@ -165,6 +165,7 @@ Key environment variables (see `src/config.py` for defaults):
 | `IMAGE_UPSCALING_MAX_PASSES` | Maximum number of Real-ESRGAN passes to chain (default `2`) before falling back to OpenCV/Lanczos, keeping RAM usage predictable. |
 | `IMAGE_UPSCALING_TARGET_TILES` | Desired number of Real-ESRGAN tiles per frame (default `0`, meaning “use the configured tile size”). Set to `25` to force roughly a 5×5 grid so that every image benefits from tiled inference, even on CPU-only Docker. |
 | `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE` | Smallest requested upscale factor that still triggers Real-ESRGAN (default `1.05`). Set to `1.0` to always run the AI upscaler even for near-1× touch-ups, or raise it if you prefer to skip Real-ESRGAN for tiny adjustments. |
+| `IMAGE_EAGER_PREUPSCALE` | `true` forces every uploaded image through the upscaler before detection; default `false` so only the retry path performs heavy upscaling. |
 | `IBM_MAX_ENABLED` / `IBM_MAX_URL` / `IBM_MAX_TIMEOUT` | Toggle the IBM MAX Image Resolution Enhancer client, set its base URL, and override HTTP timeout (defaults: disabled, 120s). |
 | `IBM_MAX_HOST_PORT` | Host-side port that exposes the IBM MAX health/API endpoint (default `5100`); useful when `localhost:5000` is already reserved. |
 | `IBM_MAX_PLATFORM` | Docker platform string passed to the IBM MAX service (default `linux/amd64`); set to `linux/amd64` on Apple Silicon so QEMU emulation runs the upstream image. |
@@ -175,6 +176,10 @@ Key environment variables (see `src/config.py` for defaults):
 | `DB_TYPE` | `local` (JSON) or `firestore`; controls which backend `FaceDatabase` instantiates. |
 | `FIRESTORE_DATABASE_ID` | Firestore database ID (default `(default)`). |
 | `FIRESTORE_LOCATION_ID` | Region for Firestore (e.g. `us-central`, `nam5`). |
+| `UPSCALE_RETRY_ENABLED` | Enables the “detect → upscale → retry” workflow when faces/embeddings/matches aren’t found (default `true`). |
+| `UPSCALE_RETRY_ON_ZERO_MATCH` | When `true`, the retry also runs if embeddings exist but no matches clear the threshold (default `true`). |
+| `UPSCALE_RETRY_MIN_OUTSCALE` | Minimum outscale factor applied during the retry upscaling sequence (default `2.0`). |
+| `UPSCALE_RETRY_BACKENDS` | Comma-separated list of backends to try during retries, ordered by priority (default `ibm_max,realesrgan,opencv,lanczos`). |
 
 > **Upscaling note:** With **12GB** allocated to Docker/Compose the app can chain up to **two** Real-ESRGAN passes using the `realesrgan_x6plus` preset (`IMAGE_UPSCALING_TARGET_SCALE=8.0`, `IMAGE_UPSCALING_MAX_PASSES=2`). On CPU-only hosts the code automatically clamps to a single 4× Real-ESRGAN pass (plus a lightweight interpolation touch-up) to keep processing times reasonable; CUDA-equipped machines keep the full multi-pass sequence. If PyTorch reports an out-of-memory error on any pass the code retries at a smaller scale (or the previous successful pass) before falling back to OpenCV/Lanczos. Lower these env vars on leaner machines.
 

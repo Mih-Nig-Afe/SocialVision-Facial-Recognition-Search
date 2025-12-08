@@ -12,8 +12,8 @@ opencv-contrib-python==4.10.0.84
 numpy==1.26.4
 scipy==1.14.1
 # DeepFace with compatible TensorFlow/Keras versions (fixes LocallyConnected2D issue)
-# Using TensorFlow 2.16+ with DeepFace 0.0.88+ for Keras 3 compatibility
-tensorflow>=2.16.0,<2.17.0
+# TensorFlow 2.16.1 provides the CPU-friendly build we need on Linux
+tensorflow==2.16.1
 keras>=3.0.0,<4.0.0
 tf-keras==2.16.0
 deepface>=0.0.88

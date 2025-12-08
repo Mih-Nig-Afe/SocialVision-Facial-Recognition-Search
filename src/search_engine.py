@@ -3,16 +3,40 @@ Search engine for finding similar faces
 """
 
 import numpy as np
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from src.logger import setup_logger
 from src.database import FaceDatabase
 from src.face_recognition_engine import FaceRecognitionEngine
+from src.image_upscaler import get_image_upscaler
 from src.config import get_config
 
 logger = setup_logger(__name__)
 config = get_config()
 DEFAULT_SIMILARITY_THRESHOLD = getattr(config, "FACE_SIMILARITY_THRESHOLD", 0.35)
 DEFAULT_EMBEDDING_SOURCE = getattr(config, "DEFAULT_EMBEDDING_SOURCE", "deepface")
+UPSCALE_RETRY_ENABLED = bool(getattr(config, "UPSCALE_RETRY_ENABLED", True))
+UPSCALE_RETRY_ON_ZERO_MATCH = bool(getattr(config, "UPSCALE_RETRY_ON_ZERO_MATCH", True))
+UPSCALE_RETRY_MIN_OUTSCALE = float(
+    max(1.0, getattr(config, "UPSCALE_RETRY_MIN_OUTSCALE", 2.0))
+)
+_DEFAULT_RETRY_BACKENDS = ("ibm_max", "realesrgan", "opencv", "lanczos")
+
+
+def _parse_retry_backends(raw: Optional[str]) -> List[str]:
+    if not raw:
+        return list(_DEFAULT_RETRY_BACKENDS)
+    parsed: List[str] = []
+    for token in raw.split(","):
+        name = token.strip().lower()
+        if not name or name in parsed:
+            continue
+        parsed.append(name)
+    return parsed or list(_DEFAULT_RETRY_BACKENDS)
+
+
+UPSCALE_RETRY_BACKENDS = _parse_retry_backends(
+    getattr(config, "UPSCALE_RETRY_BACKENDS", "ibm_max,realesrgan,opencv,lanczos")
+)
 
 
 class SearchEngine:
@@ -29,6 +53,8 @@ class SearchEngine:
         self.face_engine = FaceRecognitionEngine()
         self._multi_extractor = None
         self._multi_extractor_initialized = False
+        self._upscaler = None
+        self._upscaler_initialized = False
         logger.info("Initialized SearchEngine")
 
     @property
@@ -44,6 +70,19 @@ class SearchEngine:
                 logger.warning("Failed to initialize multi-extractor: %s", exc)
                 self._multi_extractor_initialized = True
         return self._multi_extractor
+
+    @property
+    def upscaler(self):
+        """Lazy-load the upscaler for fallback passes."""
+        if self._upscaler is None and not self._upscaler_initialized:
+            try:
+                self._upscaler = get_image_upscaler()
+            except Exception as exc:
+                logger.warning("Failed to initialize upscaler for retries: %s", exc)
+                self._upscaler = None
+            finally:
+                self._upscaler_initialized = True
+        return self._upscaler
 
     def _extract_with_multi_backend(
         self, image: np.ndarray, source: str = "unknown"
@@ -184,89 +223,258 @@ class SearchEngine:
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         top_k: int = 50,
     ) -> Dict:
-        """
-        Search for similar faces by image
+        """Search for similar faces, retrying with an aggressively upscaled frame if necessary."""
 
-        Args:
-            image: Input image (BGR format)
-            threshold: Similarity threshold
-            top_k: Number of top results
-
-        Returns:
-            Dictionary with search results for each detected face
-        """
         try:
-            logger.info("Starting face detection in search_by_image...")
-            # Detect faces
-            face_locations = self.face_engine.detect_faces(image)
-            logger.info(
-                f"Face detection completed. Found {len(face_locations)} face(s)"
+            base_shape = self._shape_from_image(image)
+            primary = self._execute_search_pass(
+                image=image,
+                threshold=threshold,
+                top_k=top_k,
+                context="original",
+                report_shape=base_shape,
             )
 
-            if not face_locations:
-                logger.warning("No faces detected in query image")
-                return {"faces": [], "total_matches": 0}
-
-            logger.info("Extracting face embeddings...")
-            # Extract embeddings
-            embeddings = self.face_engine.extract_face_embeddings(image, face_locations)
-            logger.info(f"Extracted {len(embeddings)} embedding bundle(s)")
-
-            if len(embeddings) == 0:
-                logger.warning(
-                    "No embeddings extracted - DeepFace may not be available"
+            retry_reason = self._should_retry_with_upscale(primary)
+            if retry_reason:
+                fallback = self._try_upscaled_retry(
+                    image=image,
+                    threshold=threshold,
+                    top_k=top_k,
+                    report_shape=base_shape,
+                    reason=retry_reason,
                 )
-                # Return empty results but indicate faces were detected
-                return {
-                    "faces": [
-                        {"face_index": i, "location": loc, "matches": []}
-                        for i, loc in enumerate(face_locations)
-                    ],
-                    "total_matches": 0,
-                }
+                if fallback:
+                    return fallback
 
-            # Search for each face
-            results = {"faces": [], "total_matches": 0}
-
-            logger.info(f"Searching database for {len(embeddings)} face(s)...")
-            for i, location in enumerate(face_locations):
-                embedding = embeddings[i] if i < len(embeddings) else {}
-                enrichment_summary = None
-                if not embedding:
-                    logger.warning("No embeddings available for face %s", i)
-                    face_results = []
-                else:
-                    face_results = self.search_by_embedding(
-                        embedding, threshold=threshold, top_k=top_k
-                    )
-
-                    if face_results:
-                        top_match = face_results[0]
-                        username = top_match.get("username")
-                        similarity = top_match.get("similarity_score")
-                        serialized_bundle = self._serialize_embedding_bundle(embedding)
-                        enrichment_summary = self._auto_enrich_identity(
-                            username, serialized_bundle, similarity
-                        )
-
-                results["faces"].append(
-                    {
-                        "face_index": i,
-                        "location": location,
-                        "matches": face_results,
-                        "enrichment": enrichment_summary,
-                    }
-                )
-                results["total_matches"] += len(face_results)
-
-            logger.info(
-                f"Image search completed with {results['total_matches']} total matches"
-            )
-            return results
-
+            return primary
         except Exception as e:
             logger.error(f"Error searching by image: {e}", exc_info=True)
             return {"faces": [], "total_matches": 0}
+
+    def _execute_search_pass(
+        self,
+        image: np.ndarray,
+        threshold: float,
+        top_k: int,
+        context: str,
+        report_shape: Optional[Tuple[int, int]],
+    ) -> Dict:
+        face_locations = self.face_engine.detect_faces(image)
+        embeddings: List[Dict] = []
+        if face_locations:
+            embeddings = self.face_engine.extract_face_embeddings(image, face_locations)
+
+        source_shape = self._shape_from_image(image)
+        normalized_locations = self._normalize_locations(
+            face_locations,
+            source_shape,
+            report_shape or source_shape,
+        )
+
+        results = self._build_results(
+            normalized_locations,
+            embeddings,
+            threshold,
+            top_k,
+        )
+
+        diagnostics = {
+            "context": context,
+            "faces_detected": len(face_locations),
+            "embeddings_extracted": len(embeddings),
+        }
+        if source_shape:
+            diagnostics["source_shape"] = self._shape_dict(source_shape)
+        if report_shape and report_shape != source_shape:
+            diagnostics["reported_shape"] = self._shape_dict(report_shape)
+
+        results["diagnostics"] = diagnostics
+        results["fallback_used"] = context != "original"
+        results["suggest_add_face"] = (
+            len(embeddings) > 0 and results.get("total_matches", 0) == 0
+        )
+        logger.info(
+            "Image search (%s) completed with %s total matches",
+            context,
+            results.get("total_matches", 0),
+        )
+        return results
+
+    def _build_results(
+        self,
+        face_locations: List[Tuple[int, int, int, int]],
+        embeddings: List[Dict],
+        threshold: float,
+        top_k: int,
+    ) -> Dict:
+        results: Dict[str, Any] = {"faces": [], "total_matches": 0}
+
+        if not face_locations:
+            return results
+
+        if len(embeddings) == 0:
+            results["faces"] = [
+                {"face_index": i, "location": loc, "matches": []}
+                for i, loc in enumerate(face_locations)
+            ]
+            return results
+
+        logger.info("Searching database for %d face(s)...", len(embeddings))
+
+        for i, location in enumerate(face_locations):
+            embedding = embeddings[i] if i < len(embeddings) else {}
+            enrichment_summary = None
+            if not embedding:
+                logger.warning("No embeddings available for face %s", i)
+                face_results = []
+            else:
+                face_results = self.search_by_embedding(
+                    embedding, threshold=threshold, top_k=top_k
+                )
+
+                if face_results:
+                    top_match = face_results[0]
+                    username = top_match.get("username")
+                    similarity = top_match.get("similarity_score")
+                    serialized_bundle = self._serialize_embedding_bundle(embedding)
+                    enrichment_summary = self._auto_enrich_identity(
+                        username, serialized_bundle, similarity
+                    )
+
+            results["faces"].append(
+                {
+                    "face_index": i,
+                    "location": location,
+                    "matches": face_results,
+                    "enrichment": enrichment_summary,
+                }
+            )
+            results["total_matches"] += len(face_results)
+
+        return results
+
+    def _normalize_locations(
+        self,
+        locations: List[Tuple[int, int, int, int]],
+        source_shape: Optional[Tuple[int, int]],
+        target_shape: Optional[Tuple[int, int]],
+    ) -> List[Tuple[int, int, int, int]]:
+        if not locations:
+            return []
+
+        if not source_shape or not target_shape or source_shape == target_shape:
+            return list(locations)
+
+        source_h, source_w = source_shape
+        target_h, target_w = target_shape
+        if source_h <= 0 or source_w <= 0:
+            return list(locations)
+
+        scale_y = target_h / float(source_h)
+        scale_x = target_w / float(source_w)
+        normalized: List[Tuple[int, int, int, int]] = []
+        for top, right, bottom, left in locations:
+            normalized.append(
+                (
+                    int(round(top * scale_y)),
+                    int(round(right * scale_x)),
+                    int(round(bottom * scale_y)),
+                    int(round(left * scale_x)),
+                )
+            )
+        return normalized
+
+    def _should_retry_with_upscale(self, result: Dict) -> Optional[str]:
+        if not UPSCALE_RETRY_ENABLED:
+            return None
+
+        diagnostics = result.get("diagnostics") or {}
+        faces = diagnostics.get("faces_detected", 0)
+        embeddings = diagnostics.get("embeddings_extracted", 0)
+
+        if faces == 0:
+            return "no_faces_detected"
+        if embeddings == 0:
+            return "no_embeddings"
+        if (
+            UPSCALE_RETRY_ON_ZERO_MATCH
+            and result.get("total_matches", 0) == 0
+            and embeddings > 0
+        ):
+            return "no_matches"
+        return None
+
+    def _try_upscaled_retry(
+        self,
+        image: np.ndarray,
+        threshold: float,
+        top_k: int,
+        report_shape: Optional[Tuple[int, int]],
+        reason: str,
+    ) -> Optional[Dict]:
+        enhanced, backend_used = self._run_retry_backends(image)
+        if enhanced is None:
+            return None
+
+        fallback = self._execute_search_pass(
+            image=enhanced,
+            threshold=threshold,
+            top_k=top_k,
+            context="upscaled_retry",
+            report_shape=report_shape,
+        )
+        fallback.setdefault("diagnostics", {})["retry_reason"] = reason
+        fallback["diagnostics"]["retry_minimum_outscale"] = UPSCALE_RETRY_MIN_OUTSCALE
+        fallback["diagnostics"]["retry_backend"] = backend_used
+        return fallback
+
+    def _run_retry_backends(
+        self, image: np.ndarray
+    ) -> Tuple[Optional[np.ndarray], Optional[str]]:
+        upscaler = self.upscaler
+        if upscaler is None:
+            return None, None
+
+        target_scale = max(
+            UPSCALE_RETRY_MIN_OUTSCALE,
+            float(getattr(upscaler, "target_scale", UPSCALE_RETRY_MIN_OUTSCALE)),
+        )
+
+        for backend_name in UPSCALE_RETRY_BACKENDS:
+            handler = getattr(upscaler, "_get_backend_handler", lambda name: None)(
+                backend_name
+            )
+            if handler is None:
+                continue
+            try:
+                logger.info(
+                    "Retrying with %s backend at >=%.2fx", backend_name, target_scale
+                )
+                enhanced = handler(image, target_scale)
+            except Exception as exc:
+                logger.warning(
+                    "Retry backend %s failed: %s", backend_name, exc, exc_info=True
+                )
+                continue
+
+            if enhanced is not None:
+                logger.info("Upscale retry succeeded via %s backend", backend_name)
+                return enhanced, backend_name
+
+        logger.warning("All retry backends failed; skipping upscale retry")
+        return None, None
+
+    @staticmethod
+    def _shape_from_image(image: Optional[np.ndarray]) -> Optional[Tuple[int, int]]:
+        if image is None or not hasattr(image, "shape") or len(image.shape) < 2:
+            return None
+        height, width = image.shape[:2]
+        return (int(height), int(width))
+
+    @staticmethod
+    def _shape_dict(shape: Tuple[int, int]) -> Dict[str, int]:
+        return {"height": int(shape[0]), "width": int(shape[1])}
 
     def enrich_face_from_image(
         self,

@@ -333,7 +333,9 @@ class ImageUpscaler:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def upscale(self, image: np.ndarray) -> np.ndarray:
+    def upscale(
+        self, image: np.ndarray, *, minimum_outscale: float = 1.0
+    ) -> np.ndarray:
         """Upscale an image while preserving detail with memory management.
 
         This method:
@@ -370,8 +372,13 @@ class ImageUpscaler:
             self._last_backend = "size_guard"
             return image
 
-        outscale = self._compute_outscale(width, height)
-        if outscale <= 1.0:
+        base_outscale = self._compute_outscale(width, height)
+        max_allowed = self.max_edge / float(max(1, max(height, width)))
+        requested_min = max(1.0, float(minimum_outscale))
+        outscale = max(base_outscale, requested_min)
+        outscale = min(outscale, max_allowed)
+
+        if outscale <= 1.0 + 1e-6:
             self._last_backend = "no_scale"
             return image
 
@@ -829,6 +836,18 @@ class ImageUpscaler:
         requested_scale = float(requested_scale)
         requested_scale = max(1.0, min(requested_scale, float(self._realesrgan_scale)))
 
+        disable_tiling = False
+        original_tile: Optional[int] = None
+        if self._should_disable_tiling_for_scale(requested_scale):
+            original_tile = getattr(self._realesrgan, "tile", None)
+            if original_tile and original_tile > 0:
+                disable_tiling = True
+                self._realesrgan.tile = 0
+                logger.debug(
+                    "Disabling Real-ESRGAN tiling for fractional scale %.3f to avoid tensor rounding errors",
+                    requested_scale,
+                )
+
         try:
             result, _ = self._realesrgan.enhance(image, outscale=requested_scale)
             return result
@@ -861,6 +880,9 @@ class ImageUpscaler:
                 exc_info=True,
             )
             return None
+        finally:
+            if disable_tiling and original_tile is not None:
+                self._realesrgan.tile = original_tile
 
     def _optimize_realesrgan_for_cpu(self) -> None:
         if self._device != "cpu":
@@ -929,6 +951,19 @@ class ImageUpscaler:
             tile = max(tile, 224)
 
         return max(32, tile)
+
+    def _should_disable_tiling_for_scale(self, requested_scale: float) -> bool:
+        if not self._realesrgan:
+            return False
+
+        tile = getattr(self._realesrgan, "tile", 0)
+        if tile <= 0:
+            return False
+
+        # Real-ESRGAN's tiler can mis-compute tensor sizes for non-integer scales.
+        return not math.isclose(
+            requested_scale, round(requested_scale), rel_tol=1e-3, abs_tol=1e-3
+        )
 
     @staticmethod
     def _estimate_tile_count(width: int, height: int, tile: int) -> int:

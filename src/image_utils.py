@@ -13,6 +13,7 @@ from src.image_upscaler import get_image_upscaler
 
 logger = setup_logger(__name__)
 config = get_config()
+EAGER_PREUPSCALE = bool(getattr(config, "IMAGE_EAGER_PREUPSCALE", False))
 
 # Try to import cv2, but make it optional
 try:
@@ -137,11 +138,11 @@ class ImageProcessor:
         max_height: int = 1400,
     ) -> np.ndarray:
         """Resize image before sending to recognition pipeline."""
-        enhanced = ImageProcessor.enhance_image(image)
-        return ImageProcessor.resize_image(enhanced, max_width, max_height)
+        working = ImageProcessor.enhance_image(image) if EAGER_PREUPSCALE else image
+        return ImageProcessor.resize_image(working, max_width, max_height)
 
     @staticmethod
-    def enhance_image(image: np.ndarray) -> np.ndarray:
+    def enhance_image(image: np.ndarray, minimum_outscale: float = 1.0) -> np.ndarray:
         """Run the configured super-resolution backend before downstream processing."""
 
         try:
@@ -151,7 +152,7 @@ class ImageProcessor:
             return image
 
         try:
-            enhanced = upscaler.upscale(image)
+            enhanced = upscaler.upscale(image, minimum_outscale=minimum_outscale)
             backend = getattr(upscaler, "last_backend", "unknown")
             logger.info("Image enhanced via %s backend", backend)
             return enhanced
