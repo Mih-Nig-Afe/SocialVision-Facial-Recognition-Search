@@ -82,6 +82,17 @@ class Config:
         "pgm",
         "pbm",
     }
+    # Video processing settings
+    MAX_VIDEO_SIZE = int(os.getenv("MAX_VIDEO_SIZE", "52428800"))  # 50MB
+    ALLOWED_VIDEO_FORMATS = {
+        "mp4",
+        "mov",
+        "avi",
+        "mkv",
+        "webm",
+    }
+    VIDEO_FRAME_STRIDE = int(os.getenv("VIDEO_FRAME_STRIDE", "5"))
+    VIDEO_MAX_FRAMES = int(os.getenv("VIDEO_MAX_FRAMES", "90"))
     IMAGE_QUALITY = int(os.getenv("IMAGE_QUALITY", "85"))
     IMAGE_UPSCALING_ENABLED = (
         os.getenv("IMAGE_UPSCALING_ENABLED", "True").lower() == "true"

@@ -3,7 +3,7 @@ Search engine for finding similar faces
 """
 
 import numpy as np
-from typing import List, Dict, Optional, Any, Tuple
+from typing import Iterable, List, Dict, Optional, Any, Tuple
 from src.logger import setup_logger
 from src.database import FaceDatabase
 from src.face_recognition_engine import FaceRecognitionEngine
@@ -251,6 +251,109 @@ class SearchEngine:
         except Exception as e:
             logger.error(f"Error searching by image: {e}", exc_info=True)
             return {"faces": [], "total_matches": 0}
+
+    def search_video_frames(
+        self,
+        frames: Iterable[np.ndarray],
+        threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+        top_k: int = 50,
+    ) -> Dict[str, Any]:
+        """Aggregate search over a sequence of video frames."""
+
+        aggregate: Dict[str, Any] = {
+            "frames_processed": 0,
+            "frames_with_faces": 0,
+            "total_faces_detected": 0,
+            "total_matches": 0,
+            "matches_by_user": [],
+            "frame_summaries": [],
+            "suggest_add_face": False,
+        }
+
+        user_stats: Dict[str, Dict[str, Any]] = {}
+
+        for idx, frame in enumerate(frames):
+            if frame is None:
+                continue
+
+            frame_result = self.search_by_image(frame, threshold=threshold, top_k=top_k)
+            faces = frame_result.get("faces", [])
+            matches = frame_result.get("total_matches", 0)
+            aggregate["frames_processed"] += 1
+            aggregate["total_faces_detected"] += len(faces)
+            aggregate["total_matches"] += matches
+            if len(faces) > 0:
+                aggregate["frames_with_faces"] += 1
+
+            top_user = None
+            top_similarity = None
+
+            for face in faces:
+                for match in face.get("matches", []):
+                    username = match.get("username")
+                    similarity = match.get("similarity_score")
+                    source = match.get("source")
+                    if username is None:
+                        continue
+
+                    stats = user_stats.setdefault(
+                        username,
+                        {
+                            "username": username,
+                            "match_count": 0,
+                            "similarities": [],
+                            "sources": set(),
+                            "frames": set(),
+                        },
+                    )
+                    stats["match_count"] += 1
+                    if similarity is not None:
+                        stats["similarities"].append(float(similarity))
+                    if source:
+                        stats["sources"].add(source)
+                    stats["frames"].add(idx)
+
+                    if top_similarity is None or (
+                        similarity is not None and similarity > top_similarity
+                    ):
+                        top_similarity = similarity
+                        top_user = username
+
+            aggregate["frame_summaries"].append(
+                {
+                    "frame_index": idx,
+                    "faces_detected": len(faces),
+                    "matches": matches,
+                    "top_username": top_user,
+                    "top_similarity": (
+                        float(top_similarity) if top_similarity is not None else None
+                    ),
+                    "fallback_used": bool(frame_result.get("fallback_used", False)),
+                    "suggest_add_face": bool(
+                        frame_result.get("suggest_add_face", False)
+                    ),
+                }
+            )
+
+            if frame_result.get("suggest_add_face"):
+                aggregate["suggest_add_face"] = True
+
+        if user_stats:
+            for stats in user_stats.values():
+                sims = stats.pop("similarities", [])
+                frames_set = stats.pop("frames", set())
+                sources_set = stats.pop("sources", set())
+                stats["avg_similarity"] = float(np.mean(sims)) if sims else None
+                stats["max_similarity"] = float(max(sims)) if sims else None
+                stats["sources"] = sorted(sources_set)
+                stats["frames"] = sorted(frames_set)
+            aggregate["matches_by_user"] = sorted(
+                user_stats.values(),
+                key=lambda x: (x.get("match_count", 0), x.get("avg_similarity", 0)),
+                reverse=True,
+            )
+
+        return aggregate
 
     def _execute_search_pass(
         self,
