@@ -25,7 +25,8 @@ docker compose up -d
 ### Step 2: Access the Application
 
 Open your browser and go to:
-```
+
+```text
 http://localhost:8501
 ```
 
@@ -83,8 +84,9 @@ If the microservice is temporarily unreachable, set `IBM_MAX_FAILURE_THRESHOLD=1
 
 - `IMAGE_UPSCALING_TARGET_TILES=25` forces roughly a 5×5 grid so every upload benefits from tiled inference even on CPU-constrained Docker.
 - `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE=1.0` keeps Real-ESRGAN active for even minor touch-ups; raise it if you want to skip AI passes for tiny images.
-- To run against Google Firestore instead of the local JSON DB, set `DB_TYPE=firestore`, `FIREBASE_ENABLED=true`, and provide a service account at `config/firebase_config.json` (mount it into the container). The app now auto-provisions the default database/collections when credentials allow.
-```
+- To run against Google Firestore instead of the local JSON DB, set `DB_TYPE=firestore`, `FIREBASE_ENABLED=true`, and provide a service account at `config/firebase_config.json` (mount it into the container).
+- To run against Firebase Realtime Database, set `DB_TYPE=realtime`, plus `FIREBASE_DATABASE_URL` and credentials.
+- To prefer Firestore but fall back to Realtime Database automatically (and then to local JSON as a last resort), set `DB_TYPE=firebase`.
 
 ---
 

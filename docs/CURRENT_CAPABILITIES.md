@@ -123,11 +123,13 @@ Manual smoke tests:
 - `DEEPFACE_EMBEDDING_WEIGHT` / `DLIB_EMBEDDING_WEIGHT` tune how similarity scores blend.
 - `LOCAL_DB_PATH` switches JSON storage (default `data/faces_database.json`).
 - `FACE_SIMILARITY_THRESHOLD` globally affects Search + Enrichment.
-| `IMAGE_UPSCALING_ENABLED` keeps the multi-backend super-resolution stage active (default `true`).
-| `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE` + `IMAGE_UPSCALING_TARGET_TILES` tune when Real-ESRGAN fires and how many tiles it should consume per frame.
-| `IBM_MAX_ENABLED`, `IBM_MAX_URL`, `IBM_MAX_TIMEOUT` control the optional IBM MAX microservice client.
-| `NCNN_UPSCALING_ENABLED`, `NCNN_EXEC_PATH`, `NCNN_MODEL_NAME` configure the Real-ESRGAN NCNN Vulkan fallback.
-| `DB_TYPE=firestore`, `FIREBASE_ENABLED=true`, and service-account credentials at `config/firebase_config.json` switch the database driver from JSON to Firestore (default in Docker).
+- `IMAGE_UPSCALING_ENABLED` keeps the multi-backend super-resolution stage active (default `true`).
+- `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE` + `IMAGE_UPSCALING_TARGET_TILES` tune when Real-ESRGAN fires and how many tiles it should consume per frame.
+- `IBM_MAX_ENABLED`, `IBM_MAX_URL`, `IBM_MAX_TIMEOUT` control the optional IBM MAX microservice client.
+- `NCNN_UPSCALING_ENABLED`, `NCNN_EXEC_PATH`, `NCNN_MODEL_NAME` configure the Real-ESRGAN NCNN Vulkan fallback.
+- `DB_TYPE=firestore` switches the database driver from JSON to Firestore.
+- `DB_TYPE=realtime` switches the database driver from JSON to Firebase Realtime Database.
+- `DB_TYPE=firebase` prefers Firestore and falls back to Realtime Database.
 
 See `src/config.py` for the full catalog.
 

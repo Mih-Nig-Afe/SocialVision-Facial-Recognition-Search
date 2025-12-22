@@ -96,13 +96,21 @@ def initialize_components():
 def main():
     """Main application"""
 
+    def _safe_rerun() -> None:
+        try:
+            st.rerun()
+        except Exception:
+            st.experimental_rerun()
+
     # Header
     st.title("🔍 SocialVision")
     st.markdown("### Advanced Facial Recognition Search Engine with Auto-Enrichment")
     st.markdown("---")
 
     # Initialize components
-    db, search_engine, face_engine, auto_improver, quality_assessor = initialize_components()
+    db, search_engine, face_engine, auto_improver, quality_assessor = (
+        initialize_components()
+    )
 
     # Sidebar
     with st.sidebar:
@@ -127,7 +135,7 @@ def main():
         enable_auto_improve = st.checkbox(
             "Enable Auto Face Quality Improvement",
             value=True,
-            help="Automatically enhance face quality before processing"
+            help="Automatically enhance face quality before processing",
         )
         min_quality_score = st.slider(
             "Minimum Quality Score",
@@ -251,17 +259,34 @@ def main():
                         _run_image_search(raw_image, "Uploaded Image")
 
         elif input_mode == "Live camera":
-            st.info("💡 Tip: Position your face clearly in the camera view for best results")
+            st.info(
+                "💡 Tip: Position your face clearly in the camera view for best results"
+            )
+            st.caption(
+                "If the browser doesn’t prompt: open the app at http://localhost:8501 (not 0.0.0.0), "
+                "and ensure camera permission is allowed in your browser site settings."
+            )
+
+            if "search_cam_version" not in st.session_state:
+                st.session_state.search_cam_version = 0
+
+            if st.button("Request camera access", key="search_request_camera"):
+                st.session_state.search_cam_version += 1
+                _safe_rerun()
+
             camera_capture = st.camera_input(
                 "Capture from your camera",
-                help="Click the camera button to capture an image"
+                key=f"search_camera_{st.session_state.search_cam_version}",
+                help="Click the camera button to capture an image",
             )
-            
+
             col1, col2 = st.columns(2)
             with col1:
-            search_button = st.button("🔍 Search Capture", use_container_width=True)
+                search_button = st.button("🔍 Search Capture", use_container_width=True)
             with col2:
-                continuous_mode = st.checkbox("Continuous Mode", help="Automatically search on each capture")
+                continuous_mode = st.checkbox(
+                    "Continuous Mode", help="Automatically search on each capture"
+                )
 
             if camera_capture and (search_button or continuous_mode):
                 with st.spinner("Processing camera capture..."):
@@ -274,14 +299,23 @@ def main():
                             quality_metrics = quality_assessor.assess_quality(raw_image)
                             col1, col2, col3, col4 = st.columns(4)
                             with col1:
-                                st.metric("Quality Score", f"{quality_metrics['overall_score']:.2f}")
+                                st.metric(
+                                    "Quality Score",
+                                    f"{quality_metrics['overall_score']:.2f}",
+                                )
                             with col2:
-                                st.metric("Sharpness", f"{quality_metrics['sharpness']:.2f}")
+                                st.metric(
+                                    "Sharpness", f"{quality_metrics['sharpness']:.2f}"
+                                )
                             with col3:
-                                st.metric("Brightness", f"{quality_metrics['brightness']:.2f}")
+                                st.metric(
+                                    "Brightness", f"{quality_metrics['brightness']:.2f}"
+                                )
                             with col4:
-                                st.metric("Contrast", f"{quality_metrics['contrast']:.2f}")
-                        
+                                st.metric(
+                                    "Contrast", f"{quality_metrics['contrast']:.2f}"
+                                )
+
                         _run_image_search(raw_image, "Camera Capture")
 
         else:  # Video upload
@@ -372,15 +406,19 @@ def main():
             key="add_mode",
         )
 
-        username = st.text_input("Profile Identifier", help="Unique identifier for the person")
-        source = st.selectbox("Source", ["profile_pic", "post", "story", "reel", "video", "camera"])
-        
+        username = st.text_input(
+            "Profile Identifier", help="Unique identifier for the person"
+        )
+        source = st.selectbox(
+            "Source", ["profile_pic", "post", "story", "reel", "video", "camera"]
+        )
+
         # Auto-improvement settings for adding faces
         enable_auto_improve_add = st.checkbox(
             "Enable Auto Face Quality Improvement",
             value=True,
             key="add_auto_improve",
-            help="Automatically enhance face quality before adding to database"
+            help="Automatically enhance face quality before adding to database",
         )
         min_quality_score_add = st.slider(
             "Minimum Quality Score",
@@ -404,7 +442,26 @@ def main():
                 "Upload image with faces", type=UPLOAD_EXTENSIONS, key="add_faces"
             )
         elif add_mode == "Live camera":
-            camera_capture = st.camera_input("Capture from your camera")
+            st.info(
+                "💡 Tip: Ensure good lighting and face the camera directly for best results"
+            )
+            st.caption(
+                "If the browser doesn’t prompt: open the app at http://localhost:8501 (not 0.0.0.0), "
+                "and ensure camera permission is allowed in your browser site settings."
+            )
+
+            if "add_cam_version" not in st.session_state:
+                st.session_state.add_cam_version = 0
+
+            if st.button("Request camera access", key="add_request_camera"):
+                st.session_state.add_cam_version += 1
+                _safe_rerun()
+
+            camera_capture = st.camera_input(
+                "Capture from your camera",
+                key=f"add_camera_{st.session_state.add_cam_version}",
+                help="Click the camera button to capture an image",
+            )
         else:
             video_file = st.file_uploader(
                 "Upload video with faces", type=VIDEO_EXTENSIONS, key="add_video"
@@ -465,7 +522,9 @@ def main():
                                 )
 
                                 # Detect faces for preview
-                                face_locations = face_engine.detect_faces(processed_image)
+                                face_locations = face_engine.detect_faces(
+                                    processed_image
+                                )
 
                                 if not face_locations:
                                     st.warning("No faces detected in image")
@@ -532,24 +591,31 @@ def main():
 
                                     if summary.get("success"):
                                         st.success(
-                                        f"✅ Added {summary.get('faces_added', 0)} face(s) for @{username}"
+                                            f"✅ Added {summary.get('faces_added', 0)} face(s) for @{username}"
                                         )
-                                    if enable_auto_improve_add and summary.get("quality_scores"):
-                                        avg_quality = sum(
-                                            q.get("overall_score", 0) 
-                                            for q in summary.get("quality_scores", [])
-                                        ) / len(summary.get("quality_scores", [1]))
-                                        st.info(f"Average quality score: {avg_quality:.2f}")
+                                        if enable_auto_improve_add and summary.get(
+                                            "quality_scores"
+                                        ):
+                                            quality_scores = summary.get(
+                                                "quality_scores", []
+                                            )
+                                            avg_quality = sum(
+                                                q.get("overall_score", 0)
+                                                for q in quality_scores
+                                            ) / max(len(quality_scores), 1)
+                                            st.info(
+                                                f"Average quality score: {avg_quality:.2f}"
+                                            )
                                     else:
                                         st.error(
                                             "Failed to add or update faces. Check details below."
                                         )
 
                                     st.caption(
-                                    f"Detected {summary.get('faces_detected', 0)} face(s); "
-                                    f"stored {summary.get('faces_added', 0)} record(s)."
-                                )
-                                
+                                        f"Detected {summary.get('faces_detected', 0)} face(s); "
+                                        f"stored {summary.get('faces_added', 0)} record(s)."
+                                    )
+
                                 if summary.get("faces_rejected", 0) > 0:
                                     st.warning(
                                         f"Rejected {summary.get('faces_rejected', 0)} low-quality face(s)"
@@ -564,33 +630,35 @@ def main():
                                                 st.write(f"- {msg}")
 
                 elif add_mode == "Live camera":
-                    st.info("💡 Tip: Ensure good lighting and face the camera directly for best results")
-                    camera_capture_add = st.camera_input(
-                        "Capture from your camera",
-                        key="add_camera",
-                        help="Click the camera button to capture an image"
-                    )
-                    
-                    if camera_capture_add is None:
-                        st.info("Please capture an image using the camera above")
+                    if camera_capture is None:
+                        st.error("Please capture an image using the camera above")
                     else:
                         with st.spinner("Processing camera capture..."):
-                            raw_image = _load_image(camera_capture_add)
+                            raw_image = _load_image(camera_capture)
                             if raw_image is None:
                                 st.error("Failed to decode camera capture")
                             else:
-                                # Show quality assessment
                                 if enable_auto_improve_add:
-                                    quality_metrics = quality_assessor.assess_quality(raw_image)
+                                    quality_metrics = quality_assessor.assess_quality(
+                                        raw_image
+                                    )
                                     col1, col2 = st.columns(2)
                                     with col1:
-                                        st.metric("Quality Score", f"{quality_metrics['overall_score']:.2f}")
+                                        st.metric(
+                                            "Quality Score",
+                                            f"{quality_metrics['overall_score']:.2f}",
+                                        )
                                     with col2:
-                                        if quality_metrics['overall_score'] < min_quality_score_add:
-                                            st.warning("⚠️ Quality below minimum threshold")
+                                        if (
+                                            quality_metrics["overall_score"]
+                                            < min_quality_score_add
+                                        ):
+                                            st.warning(
+                                                "⚠️ Quality below minimum threshold"
+                                            )
                                         else:
                                             st.success("✓ Quality acceptable")
-                                
+
                                 if enable_auto_improve_add:
                                     summary = auto_improver.improve_and_add_face(
                                         username=username,
@@ -603,34 +671,50 @@ def main():
                                             "uploader": "app_session",
                                         },
                                     )
-                            else:
-                                summary = face_engine.process_and_add_face(
-                                    username=username,
-                                    image=raw_image,
-                                    source=source,
-                                    metadata={
-                                        "origin": "streamlit_camera",
-                                        "uploader": "app_session",
-                                    },
-                                    return_summary=True,
-                                )
-                                
+                                else:
+                                    summary = face_engine.process_and_add_face(
+                                        username=username,
+                                        image=raw_image,
+                                        source=source,
+                                        metadata={
+                                            "origin": "streamlit_camera",
+                                            "uploader": "app_session",
+                                        },
+                                        return_summary=True,
+                                    )
+
                                 if summary.get("success"):
                                     st.success(
                                         f"✅ Added {summary.get('faces_added', 0)} face(s) for @{username}"
                                     )
-                                    if enable_auto_improve_add and summary.get("quality_scores"):
+                                    if enable_auto_improve_add and summary.get(
+                                        "quality_scores"
+                                    ):
+                                        quality_scores = summary.get(
+                                            "quality_scores", []
+                                        )
                                         avg_quality = sum(
-                                            q.get("overall_score", 0) 
-                                            for q in summary.get("quality_scores", [])
-                                        ) / len(summary.get("quality_scores", [1]))
-                                        st.info(f"Average quality score: {avg_quality:.2f}")
+                                            q.get("overall_score", 0)
+                                            for q in quality_scores
+                                        ) / max(len(quality_scores), 1)
+                                        st.info(
+                                            f"Average quality score: {avg_quality:.2f}"
+                                        )
                                 else:
                                     st.error("No faces added from camera capture")
-                                    if summary.get("faces_rejected", 0) > 0:
-                                        st.warning(
-                                            f"Rejected {summary.get('faces_rejected', 0)} low-quality face(s)"
-                                        )
+
+                                if summary.get("faces_rejected", 0) > 0:
+                                    st.warning(
+                                        f"Rejected {summary.get('faces_rejected', 0)} low-quality face(s)"
+                                    )
+
+                                if summary.get("errors"):
+                                    with st.expander(
+                                        "Processing details",
+                                        expanded=not summary.get("success"),
+                                    ):
+                                        for msg in summary["errors"]:
+                                            st.write(f"- {msg}")
 
                 else:  # Video upload
                     if not video_file:
@@ -649,6 +733,7 @@ def main():
                             else:
                                 total_added = 0
                                 total_detected = 0
+                                total_rejected = 0
                                 errors: list[str] = []
 
                                 progress_bar = st.progress(0)
@@ -667,19 +752,20 @@ def main():
                                             },
                                         )
                                     else:
-                                    summary = face_engine.process_and_add_face(
-                                        username=username,
-                                        image=frame,
-                                        source=source,
-                                        metadata={
-                                            "origin": "streamlit_video",
-                                            "frame_index": frame_idx,
-                                            "uploader": "app_session",
-                                        },
-                                        return_summary=True,
-                                    )
+                                        summary = face_engine.process_and_add_face(
+                                            username=username,
+                                            image=frame,
+                                            source=source,
+                                            metadata={
+                                                "origin": "streamlit_video",
+                                                "frame_index": frame_idx,
+                                                "uploader": "app_session",
+                                            },
+                                            return_summary=True,
+                                        )
                                     total_added += summary.get("faces_added", 0)
                                     total_detected += summary.get("faces_detected", 0)
+                                    total_rejected += summary.get("faces_rejected", 0)
                                     errors.extend(summary.get("errors", []))
                                     progress_bar.progress((frame_idx + 1) / len(frames))
 
@@ -695,15 +781,12 @@ def main():
                                 st.caption(
                                     f"Detected {total_detected} face(s) across sampled frames."
                                 )
-                                
-                                if enable_auto_improve_add:
-                                    rejected_count = sum(
-                                        s.get("faces_rejected", 0) 
-                                        for s in [summary] if 'summary' in locals()
+
+                                if enable_auto_improve_add and total_rejected > 0:
+                                    st.warning(
+                                        f"Rejected {total_rejected} low-quality face(s) from video"
                                     )
-                                    if rejected_count > 0:
-                                        st.warning(f"Rejected {rejected_count} low-quality face(s) from video")
-                                
+
                                 if errors:
                                     with st.expander("Processing details"):
                                         for msg in errors:

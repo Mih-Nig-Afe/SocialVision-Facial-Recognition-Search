@@ -38,6 +38,8 @@ class Config:
     )
     FIREBASE_ENABLED = os.getenv("FIREBASE_ENABLED", "False").lower() == "true"
     FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
+    FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL")
+    FIREBASE_DB_ROOT = os.getenv("FIREBASE_DB_ROOT", "faces_database")
     FIRESTORE_COLLECTION_PREFIX = os.getenv(
         "FIRESTORE_COLLECTION_PREFIX", "socialvision_"
     )
@@ -145,7 +147,7 @@ class Config:
     SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.6"))
 
     # Database settings
-    DB_TYPE = os.getenv("DB_TYPE", "local")  # "local" or "firebase"
+    DB_TYPE = os.getenv("DB_TYPE", "local")  # local|firestore|realtime|firebase
     LOCAL_DB_PATH = str(DATA_DIR / "faces_database.json")
 
     # API settings
@@ -170,8 +172,23 @@ class Config:
     def load_firebase_config(cls) -> Optional[Dict[str, Any]]:
         """Load Firebase configuration from JSON file"""
         try:
-            if os.path.exists(cls.FIREBASE_CONFIG_PATH):
+            # 1) Explicit path (recommended)
+            if cls.FIREBASE_CONFIG_PATH and os.path.exists(cls.FIREBASE_CONFIG_PATH):
                 with open(cls.FIREBASE_CONFIG_PATH, "r") as f:
+                    return json.load(f)
+
+            # 2) Auto-discover a service-account key placed in the repo root
+            # (useful for local development; keep keys out of version control).
+            root = Path(cls.BASE_DIR)
+            matches = sorted(root.glob("*firebase-adminsdk-*.json"))
+            if matches:
+                with open(matches[0], "r") as f:
+                    return json.load(f)
+
+            # 3) Fall back to config/firebase_config.json if present
+            default_path = Path(cls.CONFIG_DIR) / "firebase_config.json"
+            if default_path.exists():
+                with open(default_path, "r") as f:
                     return json.load(f)
         except Exception as e:
             print(f"Error loading Firebase config: {e}")

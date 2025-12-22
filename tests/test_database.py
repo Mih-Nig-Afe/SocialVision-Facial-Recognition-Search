@@ -2,9 +2,11 @@
 Tests for database module
 """
 
+import json
 import pytest
 import numpy as np
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from src.database import FaceDatabase
 
@@ -160,6 +162,50 @@ def test_clear_database(temp_db):
     result = temp_db.clear_database()
     assert result is True
     assert len(temp_db.data["faces"]) == 0
+
+
+def test_restore_from_backup_when_primary_empty(tmp_path):
+    """Ensure backup file is used if the primary local DB is unexpectedly empty."""
+
+    db_path = tmp_path / "faces.json"
+    backup_path = db_path.with_suffix(db_path.suffix + ".bak")
+
+    primary_payload = {
+        "version": "1.0",
+        "created_at": datetime.now().isoformat(),
+        "faces": [],
+        "metadata": {},
+    }
+    backup_payload = {
+        "version": "1.0",
+        "created_at": datetime.now().isoformat(),
+        "faces": [
+            {
+                "id": 0,
+                "embedding": [1.0, 0.0],
+                "embeddings": {"deepface": [1.0, 0.0]},
+                "username": "backup_user",
+                "source": "profile_pic",
+                "image_url": None,
+                "added_at": datetime.now().isoformat(),
+                "metadata": {},
+            }
+        ],
+        "metadata": {
+            "backup_user": {
+                "profile_embedding": [1.0, 0.0],
+                "embeddings_count": 1,
+            }
+        },
+    }
+
+    db_path.write_text(json.dumps(primary_payload))
+    backup_path.write_text(json.dumps(backup_payload))
+
+    restored = FaceDatabase(str(db_path))
+
+    assert restored.data["faces"], "Backup payload should repopulate faces"
+    assert restored.data["faces"][0]["username"] == "backup_user"
 
 
 if __name__ == "__main__":

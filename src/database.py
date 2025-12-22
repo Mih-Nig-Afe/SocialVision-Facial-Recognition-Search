@@ -1,6 +1,7 @@
 """Database management for face embeddings and metadata"""
 
 import json
+import shutil
 import numpy as np
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Iterable, Tuple
@@ -430,7 +431,7 @@ EMBEDDING_WEIGHTS = getattr(
 
 
 class FaceDatabase:
-    """Local JSON or Firestore-backed face database."""
+    """Local JSON, Firestore, or Firebase Realtime DB-backed face database."""
 
     def __init__(
         self,
@@ -443,8 +444,19 @@ class FaceDatabase:
         if db_path is not None and db_type is None:
             # Explicit local path implies local mode unless overridden
             db_mode = "local"
-        self.use_firestore = db_mode == "firestore"
+
+        # DB_TYPE meanings:
+        # - local: JSON file
+        # - firestore: force Firestore (error if unavailable)
+        # - realtime: force Firebase Realtime DB (error if unavailable)
+        # - firebase: prefer Firestore; fall back to Realtime DB
+        self._db_mode = db_mode
+        self.use_firestore = False
+        self.use_realtime = False
+
         self.db_path = Path(db_path or config.LOCAL_DB_PATH)
+        # Backups are only used for local JSON mode
+        self._backup_path = None
         self._firestore_client = None
         self._faces_collection = None
         self._profiles_collection = None
@@ -462,8 +474,19 @@ class FaceDatabase:
             config, "FIRESTORE_ENSURE_DATABASE", False
         )
         self._google_credentials = None
+        self._realtime_db_url: Optional[str] = None
+        self._realtime_db_root = getattr(config, "FIREBASE_DB_ROOT", "faces_database")
 
-        if self.use_firestore:
+        def _init_local() -> None:
+            self.use_firestore = False
+            self.use_realtime = False
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._backup_path = self.db_path.with_suffix(self.db_path.suffix + ".bak")
+            self.data = self._load_database()
+            logger.info(f"Initialized FaceDatabase at {self.db_path}")
+
+        if db_mode == "firestore":
+            self.use_firestore = True
             self._init_firestore()
             self.data = {
                 "version": "1.0",
@@ -475,10 +498,58 @@ class FaceDatabase:
                 "Initialized Firestore FaceDatabase for project %s",
                 getattr(config, "FIREBASE_PROJECT_ID", "unknown"),
             )
-        else:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            return
+
+        if db_mode == "realtime":
+            self.use_realtime = True
+            self._init_realtime_database()
+            # Fail fast if credentials cannot be refreshed.
+            _get_bearer_token_from_credentials(self._google_credentials)
             self.data = self._load_database()
-            logger.info(f"Initialized FaceDatabase at {self.db_path}")
+            logger.info(
+                "Initialized Firebase Realtime FaceDatabase at %s",
+                self._realtime_db_url,
+            )
+            return
+
+        if db_mode == "firebase":
+            try:
+                self.use_firestore = True
+                self._init_firestore()
+                self.data = {
+                    "version": "1.0",
+                    "created_at": datetime.now().isoformat(),
+                    "faces": [],
+                    "metadata": {},
+                }
+                logger.info("Using Firestore as primary database (firebase mode)")
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Firestore unavailable; falling back to Firebase Realtime DB: %s",
+                    exc,
+                )
+                self.use_firestore = False
+                self.use_realtime = True
+                try:
+                    self._init_realtime_database()
+                    # Fail fast if credentials cannot be refreshed.
+                    _get_bearer_token_from_credentials(self._google_credentials)
+                    self.data = self._load_database()
+                    logger.info(
+                        "Using Firebase Realtime DB as primary database (firebase mode)"
+                    )
+                    return
+                except Exception as exc2:
+                    logger.warning(
+                        "Realtime DB unavailable; falling back to local JSON DB: %s",
+                        exc2,
+                    )
+                    _init_local()
+                    return
+
+        # Local JSON
+        _init_local()
 
     @staticmethod
     def _normalize_embedding_vector(embedding: Optional[List[float]]) -> np.ndarray:
@@ -535,7 +606,12 @@ class FaceDatabase:
         project_id = self._project_id_override or getattr(
             config, "FIREBASE_PROJECT_ID", None
         )
-        credentials_obj, inferred_project = self._resolve_firestore_credentials()
+        credentials_obj, inferred_project = self._resolve_google_credentials(
+            scopes=[
+                "https://www.googleapis.com/auth/datastore",
+                "https://www.googleapis.com/auth/cloud-platform",
+            ]
+        )
         self._google_credentials = credentials_obj
         project_id = project_id or inferred_project
 
@@ -563,6 +639,10 @@ class FaceDatabase:
                 exc,
             )
             raise
+
+        # Fail fast if credentials cannot be refreshed. In "firebase" mode we
+        # rely on this raising to trigger fallback to Realtime DB / local.
+        _get_bearer_token_from_credentials(self._google_credentials)
         if self._ensure_firestore_database:
             try:
                 created = self._firestore_client.ensure_database()
@@ -584,12 +664,37 @@ class FaceDatabase:
             f"{prefix}profiles"
         )
 
-    def _resolve_firestore_credentials(self) -> Tuple[Any, Optional[str]]:
+    def _init_realtime_database(self) -> None:
         scopes = [
-            "https://www.googleapis.com/auth/datastore",
-            "https://www.googleapis.com/auth/cloud-platform",
+            "https://www.googleapis.com/auth/firebase.database",
+            "https://www.googleapis.com/auth/userinfo.email",
         ]
+        creds, inferred_project = self._resolve_google_credentials(scopes=scopes)
+        self._google_credentials = creds
 
+        project_id = self._project_id_override or getattr(
+            config, "FIREBASE_PROJECT_ID", None
+        )
+        project_id = project_id or inferred_project
+        if not project_id:
+            raise RuntimeError(
+                "FIREBASE_PROJECT_ID must be set to use Firebase Realtime Database"
+            )
+
+        explicit_url = getattr(config, "FIREBASE_DATABASE_URL", None)
+        firebase_config = config.load_firebase_config() or {}
+        config_url = (
+            firebase_config.get("databaseURL")
+            if isinstance(firebase_config, dict)
+            else None
+        )
+        derived_url = f"https://{project_id}.firebaseio.com"
+
+        self._realtime_db_url = (explicit_url or config_url or derived_url).rstrip("/")
+
+    def _resolve_google_credentials(
+        self, scopes: List[str]
+    ) -> Tuple[Any, Optional[str]]:
         firebase_config = config.load_firebase_config()
         if firebase_config and service_account is not None:
             creds = service_account.Credentials.from_service_account_info(
@@ -609,9 +714,7 @@ class FaceDatabase:
             return creds, getattr(creds, "project_id", None)
 
         if google is None:
-            raise RuntimeError(
-                "google-auth is required to resolve Firestore credentials"
-            )
+            raise RuntimeError("google-auth is required to resolve Google credentials")
 
         creds, inferred_project = google.auth.default(scopes=scopes)
         return creds, inferred_project
@@ -749,12 +852,114 @@ class FaceDatabase:
             meta["embeddings_count"] = count
 
     def _load_database(self) -> Dict[str, Any]:
+        if self.use_realtime:
+            return self._load_realtime_database()
+
+        def _is_valid(payload: Dict[str, Any]) -> bool:
+            return isinstance(payload, dict) and isinstance(payload.get("faces"), list)
+
+        def _load_from_path(path: Path) -> Optional[Dict[str, Any]]:
+            with open(path, "r") as f:
+                return json.load(f)
+
+        def _empty_payload() -> Dict[str, Any]:
+            return {
+                "version": "1.0",
+                "created_at": datetime.now().isoformat(),
+                "faces": [],
+                "metadata": {},
+            }
+
         try:
             if self.db_path.exists():
-                with open(self.db_path, "r") as f:
-                    return json.load(f)
+                try:
+                    payload = _load_from_path(self.db_path)
+                    if _is_valid(payload):
+                        if payload.get("faces"):
+                            return payload
+
+                        # If primary file is empty but a backup has faces, restore it
+                        if self._backup_path and self._backup_path.exists():
+                            backup_payload = _load_from_path(self._backup_path)
+                            if _is_valid(backup_payload) and backup_payload.get(
+                                "faces"
+                            ):
+                                logger.warning(
+                                    "Primary database %s is empty; restoring from backup %s",
+                                    self.db_path,
+                                    self._backup_path,
+                                )
+                                return backup_payload
+                        return payload
+                    logger.warning(
+                        "Database at %s is invalid; attempting to load backup",
+                        self.db_path,
+                    )
+                except Exception as exc:
+                    logger.error("Error loading database %s: %s", self.db_path, exc)
+
+            if self._backup_path and self._backup_path.exists():
+                try:
+                    backup_payload = _load_from_path(self._backup_path)
+                    if _is_valid(backup_payload):
+                        logger.warning(
+                            "Loaded face database from backup %s after primary failure",
+                            self._backup_path,
+                        )
+                        return backup_payload
+                except Exception as exc:
+                    logger.error(
+                        "Error loading backup database %s: %s", self._backup_path, exc
+                    )
+
         except Exception as e:
             logger.error(f"Error loading database: {e}")
+
+        return _empty_payload()
+
+    def _save_database(self) -> bool:
+        if self.use_firestore:
+            # Firestore writes happen per-operation; nothing to persist locally
+            return True
+
+        if self.use_realtime:
+            return self._save_realtime_database()
+
+        try:
+            tmp_path = self.db_path.with_suffix(self.db_path.suffix + ".tmp")
+            with open(tmp_path, "w") as f:
+                json.dump(self.data, f, indent=2)
+            tmp_path.replace(self.db_path)
+
+            # Keep a rolling backup to avoid data loss if the primary gets truncated
+            if self._backup_path:
+                shutil.copy2(self.db_path, self._backup_path)
+
+            logger.info(f"Database saved successfully to {self.db_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving database: {e}", exc_info=True)
+            return False
+
+    def _load_realtime_database(self) -> Dict[str, Any]:
+        try:
+            token = _get_bearer_token_from_credentials(self._google_credentials)
+            url = f"{self._realtime_db_url}/{self._realtime_db_root}.json"
+            resp = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+            if resp.status_code == 404:
+                logger.warning("Realtime DB root %s not found; initializing empty", url)
+                return {
+                    "version": "1.0",
+                    "created_at": datetime.now().isoformat(),
+                    "faces": [],
+                    "metadata": {},
+                }
+            resp.raise_for_status()
+            payload = resp.json() or {}
+            if isinstance(payload, dict) and payload.get("faces") is not None:
+                return payload
+        except Exception as exc:
+            logger.error("Error loading Firebase Realtime DB: %s", exc, exc_info=True)
 
         return {
             "version": "1.0",
@@ -763,18 +968,25 @@ class FaceDatabase:
             "metadata": {},
         }
 
-    def _save_database(self) -> bool:
-        if self.use_firestore:
-            # Firestore writes happen per-operation; nothing to persist locally
-            return True
-
+    def _save_realtime_database(self) -> bool:
         try:
-            with open(self.db_path, "w") as f:
-                json.dump(self.data, f, indent=2)
-            logger.info(f"Database saved successfully to {self.db_path}")
+            token = _get_bearer_token_from_credentials(self._google_credentials)
+            url = f"{self._realtime_db_url}/{self._realtime_db_root}.json"
+            resp = requests.put(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=self.data,
+            )
+            resp.raise_for_status()
+            logger.info(
+                "Database saved successfully to Firebase Realtime DB root %s", url
+            )
             return True
-        except Exception as e:
-            logger.error(f"Error saving database: {e}", exc_info=True)
+        except Exception as exc:
+            logger.error("Error saving to Firebase Realtime DB: %s", exc, exc_info=True)
             return False
 
     def add_face(
@@ -1303,6 +1515,15 @@ class FaceDatabase:
                     doc.reference.delete()
                 logger.warning("Firestore face database cleared")
                 return True
+
+            if self.use_realtime:
+                self.data = {
+                    "version": "1.0",
+                    "created_at": datetime.now().isoformat(),
+                    "faces": [],
+                    "metadata": {},
+                }
+                return self._save_realtime_database()
 
             self.data = {
                 "version": "1.0",

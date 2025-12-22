@@ -173,7 +173,9 @@ Key environment variables (see `src/config.py` for defaults):
 | `IBM_MAX_PROBE_ON_START` | `true` probes `/model/metadata` on startup and disables IBM MAX immediately if the local sidecar cannot be reached (default `true`). |
 | `NCNN_UPSCALING_ENABLED` / `NCNN_EXEC_PATH` / `NCNN_MODEL_NAME` | Configure the standalone Real-ESRGAN NCNN Vulkan executable path, model, and tiling so it can act as the next fallback when IBM MAX is unavailable. |
 | `LOCAL_DB_PATH` | Path to JSON database (default `data/faces_database.json`). |
-| `DB_TYPE` | `local` (JSON) or `firestore`; controls which backend `FaceDatabase` instantiates. |
+| `DB_TYPE` | `local`, `firestore`, `realtime`, or `firebase` (Firestore preferred → Realtime fallback → local fallback); controls which backend `FaceDatabase` instantiates. |
+| `FIREBASE_DATABASE_URL` | Realtime Database URL (e.g. `https://<project>.firebaseio.com`). |
+| `FIREBASE_DB_ROOT` | Realtime Database root path (default `faces_database`). |
 | `FIRESTORE_DATABASE_ID` | Firestore database ID (default `(default)`). |
 | `FIRESTORE_LOCATION_ID` | Region for Firestore (e.g. `us-central`, `nam5`). |
 | `UPSCALE_RETRY_ENABLED` | Enables the “detect → upscale → retry” workflow when faces/embeddings/matches aren’t found (default `true`). |
@@ -185,7 +187,7 @@ Key environment variables (see `src/config.py` for defaults):
 
 Add optional secrets (Firebase, etc.) via `.env` or environment-specific config classes.
 
-### Using Firestore instead of the local JSON database
+### Using Firestore or Firebase Realtime Database instead of the local JSON database
 
 The data layer can be switched to **Google Cloud Firestore (native mode)** so that no facial embeddings are ever written to local disk. To connect the app to your project:
 
@@ -194,13 +196,33 @@ The data layer can be switched to **Google Cloud Firestore (native mode)** so th
 3. **Install the cloud persistence dependencies** (`firebase-admin`, `google-cloud-firestore`, `google-auth`) using `pip install -r requirements.txt`, then export the following variables before running Streamlit or the Docker image:
 
     ```bash
-    export DB_TYPE=firestore               # tells FaceDatabase to use Firestore
+    # Firestore (forced)
+    export DB_TYPE=firestore
     export FIREBASE_ENABLED=true           # optional flag used elsewhere in the app
     export FIREBASE_PROJECT_ID="your-project-id"
     export FIREBASE_CONFIG_PATH="$PWD/config/firebase_config.json"
     export FIRESTORE_COLLECTION_PREFIX="socialvision_"   # optional namespace
     export FIRESTORE_DATABASE_ID="(default)"             # leave as default unless you created a named DB
     export FIRESTORE_LOCATION_ID="us-central"            # region/nam5/etc from step 1
+    ```
+
+    ```bash
+    # Firebase Realtime Database (forced)
+    export DB_TYPE=realtime
+    export FIREBASE_ENABLED=true
+    export FIREBASE_PROJECT_ID="your-project-id"
+    export FIREBASE_CONFIG_PATH="$PWD/config/firebase_config.json"
+    export FIREBASE_DATABASE_URL="https://<project>.firebaseio.com"
+    export FIREBASE_DB_ROOT="faces_database"  # optional
+    ```
+
+    ```bash
+    # Auto mode: prefer Firestore, fall back to Realtime Database
+    export DB_TYPE=firebase
+    export FIREBASE_ENABLED=true
+    export FIREBASE_PROJECT_ID="your-project-id"
+    export FIREBASE_CONFIG_PATH="$PWD/config/firebase_config.json"
+    export FIREBASE_DATABASE_URL="https://<project>.firebaseio.com"  # used on fallback
     ```
 
     When running in Docker, mount the credentials file (e.g. `-v $PWD/config/firebase_config.json:/app/config/firebase_config.json:ro`) and pass the same environment variables via `docker compose`.
