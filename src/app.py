@@ -23,6 +23,17 @@ try:
 except ImportError:
     HAS_CV2 = False
 
+# Try to import streamlit-webrtc for live camera
+try:
+    from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
+    import av
+
+    HAS_WEBRTC = True
+except ImportError:
+    HAS_WEBRTC = False
+    webrtc_streamer = None
+    VideoProcessorBase = object
+
 # Configuration
 config = get_config()
 DEFAULT_EMBEDDING_SOURCE = getattr(config, "DEFAULT_EMBEDDING_SOURCE", "deepface")
@@ -260,8 +271,68 @@ def main():
 
         elif input_mode == "Live camera":
             st.info(
-                "💡 Tip: Position your face clearly in the camera view for best results"
+                "📹 **Real-time face recognition** - Faces are detected and identified live on camera feed"
             )
+
+            if not HAS_WEBRTC:
+                st.error(
+                    "streamlit-webrtc is not installed. Please rebuild the Docker container."
+                )
+            else:
+                from src.live_recognition import LiveRecognitionProcessor
+
+                # Create video processor class for webrtc
+                class FaceRecognitionVideoProcessor(VideoProcessorBase):
+                    def __init__(self):
+                        self._processor = None
+
+                    def recv(self, frame):
+                        import av
+
+                        img = frame.to_ndarray(format="bgr24")
+
+                        # Lazy init the processor
+                        if self._processor is None:
+                            self._processor = LiveRecognitionProcessor(
+                                search_engine=search_engine,
+                                face_engine=face_engine,
+                                threshold=similarity_threshold,
+                            )
+
+                        # Process frame with face recognition overlays
+                        processed = self._processor.process_frame(img)
+
+                        return av.VideoFrame.from_ndarray(processed, format="bgr24")
+
+                st.caption(
+                    "Faces will be detected and matched against the database in real-time. "
+                    "Green boxes = recognized, Orange boxes = unknown."
+                )
+
+                # WebRTC streamer for live video
+                webrtc_ctx = webrtc_streamer(
+                    key="live-face-recognition",
+                    mode=WebRtcMode.SENDRECV,
+                    video_processor_factory=FaceRecognitionVideoProcessor,
+                    media_stream_constraints={
+                        "video": {"width": 640, "height": 480},
+                        "audio": False,
+                    },
+                    async_processing=True,
+                    rtc_configuration={
+                        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+                    },
+                )
+
+                if webrtc_ctx.state.playing:
+                    st.success("Live camera is active - recognition running")
+                else:
+                    st.warning("Click START to begin live face recognition")
+
+            # Keep fallback capture mode below
+            st.markdown("---")
+            st.subheader("Manual Capture Mode")
+            st.caption("Alternatively, use manual capture below:")
             st.caption(
                 "If the browser doesn’t prompt: open the app at http://localhost:8501 (not 0.0.0.0), "
                 "and ensure camera permission is allowed in your browser site settings."

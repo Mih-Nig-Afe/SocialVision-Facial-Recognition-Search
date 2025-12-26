@@ -222,8 +222,16 @@ class SearchEngine:
         image: np.ndarray,
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         top_k: int = 50,
+        skip_upscale: bool = False,
     ) -> Dict:
-        """Search for similar faces, retrying with an aggressively upscaled frame if necessary."""
+        """Search for similar faces, optionally retrying with upscaled frame.
+
+        Args:
+            image: Input image as numpy array
+            threshold: Similarity threshold for matches
+            top_k: Maximum number of results to return
+            skip_upscale: If True, skip upscaling retry for faster processing
+        """
 
         try:
             base_shape = self._shape_from_image(image)
@@ -235,17 +243,19 @@ class SearchEngine:
                 report_shape=base_shape,
             )
 
-            retry_reason = self._should_retry_with_upscale(primary)
-            if retry_reason:
-                fallback = self._try_upscaled_retry(
-                    image=image,
-                    threshold=threshold,
-                    top_k=top_k,
-                    report_shape=base_shape,
-                    reason=retry_reason,
-                )
-                if fallback:
-                    return fallback
+            # Skip upscale retry if requested (for real-time processing)
+            if not skip_upscale:
+                retry_reason = self._should_retry_with_upscale(primary)
+                if retry_reason:
+                    fallback = self._try_upscaled_retry(
+                        image=image,
+                        threshold=threshold,
+                        top_k=top_k,
+                        report_shape=base_shape,
+                        reason=retry_reason,
+                    )
+                    if fallback:
+                        return fallback
 
             return primary
         except Exception as e:
