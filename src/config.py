@@ -40,6 +40,9 @@ class Config:
     FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
     FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL")
     FIREBASE_DB_ROOT = os.getenv("FIREBASE_DB_ROOT", "faces_database")
+    REALTIME_BOOTSTRAP_FROM_LOCAL = (
+        os.getenv("REALTIME_BOOTSTRAP_FROM_LOCAL", "False").lower() == "true"
+    )
     FIRESTORE_COLLECTION_PREFIX = os.getenv(
         "FIRESTORE_COLLECTION_PREFIX", "socialvision_"
     )
@@ -48,6 +51,19 @@ class Config:
     FIRESTORE_ENSURE_DATABASE = (
         os.getenv("FIRESTORE_ENSURE_DATABASE", "False").lower() == "true"
     )
+    # Firestore REST safety: avoid hammering the API from Streamlit reruns.
+    # - BOOTSTRAP_FROM_LOCAL: when Firestore collection is empty, upload faces from LOCAL_DB_PATH once.
+    # - STATS_CACHE_TTL: caches expensive listDocuments-based statistics.
+    FIRESTORE_BOOTSTRAP_FROM_LOCAL = (
+        os.getenv("FIRESTORE_BOOTSTRAP_FROM_LOCAL", "False").lower() == "true"
+    )
+    FIRESTORE_STATS_CACHE_TTL_SECONDS = float(
+        os.getenv("FIRESTORE_STATS_CACHE_TTL_SECONDS", "10")
+    )
+    FIRESTORE_REST_MAX_RETRIES = int(os.getenv("FIRESTORE_REST_MAX_RETRIES", "5"))
+    FIRESTORE_REST_TIMEOUT_SECONDS = float(
+        os.getenv("FIRESTORE_REST_TIMEOUT_SECONDS", "20")
+    )
 
     # Face Recognition settings
     FACE_RECOGNITION_MODEL = "hog"  # "hog" or "cnn" (cnn is more accurate but slower)
@@ -55,6 +71,7 @@ class Config:
     FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "0.6"))
     DEEPFACE_MODEL = os.getenv("DEEPFACE_MODEL", "Facenet512")
     DEEPFACE_DETECTOR_BACKEND = os.getenv("DEEPFACE_DETECTOR_BACKEND", "opencv")
+    DEEPFACE_ENABLED = os.getenv("DEEPFACE_ENABLED", "True").lower() == "true"
     FACE_SIMILARITY_THRESHOLD = float(os.getenv("FACE_SIMILARITY_THRESHOLD", "0.35"))
     ENABLE_DUAL_EMBEDDINGS = (
         os.getenv("ENABLE_DUAL_EMBEDDINGS", "True").lower() == "true"
@@ -227,6 +244,7 @@ class TestingConfig(Config):
     IMAGE_UPSCALING_ENABLED = False
     IBM_MAX_ENABLED = False
     NCNN_UPSCALING_ENABLED = False
+    DEEPFACE_ENABLED = False
 
 
 def get_config() -> Config:

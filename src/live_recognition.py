@@ -5,11 +5,20 @@ Uses streamlit-webrtc for continuous video streaming.
 
 import cv2
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Type
 from dataclasses import dataclass
-from collections import deque
 import threading
 import time
+
+try:
+    from streamlit_webrtc import VideoProcessorBase
+    import av
+
+    HAS_WEBRTC = True
+except ImportError:
+    VideoProcessorBase = object  # Fallback for type hints
+    av = None
+    HAS_WEBRTC = False
 
 from src.logger import setup_logger
 from src.config import get_config
@@ -149,3 +158,40 @@ class LiveRecognitionProcessor:
     def update_threshold(self, threshold: float) -> None:
         """Update the similarity threshold."""
         self.threshold = threshold
+
+
+def create_video_processor_factory(search_engine, face_engine, threshold: float):
+    """Create a factory function that returns a VideoProcessor class.
+
+    This is needed because streamlit-webrtc requires a class factory,
+    and we need to pass the engines into the processor.
+    """
+
+    class FaceRecognitionVideoProcessor(VideoProcessorBase):
+        """Video processor for real-time face recognition."""
+
+        def __init__(self):
+            self._processor = LiveRecognitionProcessor(
+                search_engine=search_engine,
+                face_engine=face_engine,
+                threshold=threshold,
+            )
+            logger.info("FaceRecognitionVideoProcessor initialized")
+
+        def recv(self, frame):
+            """Process each video frame."""
+            try:
+                # Convert frame to numpy array
+                img = frame.to_ndarray(format="bgr24")
+
+                # Process frame with face recognition overlays
+                processed = self._processor.process_frame(img)
+
+                # Return processed frame
+                return av.VideoFrame.from_ndarray(processed, format="bgr24")
+            except Exception as e:
+                logger.error(f"Error processing video frame: {e}")
+                # Return original frame on error
+                return frame
+
+    return FaceRecognitionVideoProcessor

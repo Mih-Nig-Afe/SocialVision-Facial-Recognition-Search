@@ -16,6 +16,7 @@ logger = setup_logger(__name__)
 config = get_config()
 ENABLE_DUAL_EMBEDDINGS = getattr(config, "ENABLE_DUAL_EMBEDDINGS", True)
 DEFAULT_EMBEDDING_SOURCE = getattr(config, "DEFAULT_EMBEDDING_SOURCE", "deepface")
+DEEPFACE_ENABLED = bool(getattr(config, "DEEPFACE_ENABLED", True))
 EmbeddingBundle = Dict[str, np.ndarray]
 
 # Supported DeepFace models / detector backends (per upstream docs)
@@ -81,6 +82,9 @@ try:
     # fragile across Python and OS versions. To keep the rest of the
     # application testable even when DeepFace cannot be imported, we treat it
     # as optional and gracefully degrade behaviour when it is unavailable.
+    if not DEEPFACE_ENABLED:
+        raise ImportError("DeepFace disabled via DEEPFACE_ENABLED")
+
     from deepface import DeepFace  # type: ignore
 
     # Test that DeepFace actually works by doing a simple import check

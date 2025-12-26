@@ -139,9 +139,22 @@ class ImageProcessor:
         image: np.ndarray,
         max_width: int = 1400,
         max_height: int = 1400,
+        *,
+        enhance: bool = False,
+        minimum_outscale: float = 1.0,
     ) -> np.ndarray:
-        """Resize image before sending to recognition pipeline."""
-        working = ImageProcessor.enhance_image(image) if EAGER_PREUPSCALE else image
+        """Resize image before sending to recognition pipeline.
+
+        Enhancement (super-resolution) is intentionally opt-in because it can be
+        very expensive (e.g., Real-ESRGAN tiling on CPU).
+        """
+
+        working = image
+        if enhance:
+            working = ImageProcessor.enhance_image(
+                working,
+                minimum_outscale=minimum_outscale,
+            )
         return ImageProcessor.resize_image(working, max_width, max_height)
 
     @staticmethod
@@ -155,7 +168,11 @@ class ImageProcessor:
             return image
 
         try:
-            enhanced = upscaler.upscale(image, minimum_outscale=minimum_outscale)
+            try:
+                enhanced = upscaler.upscale(image, minimum_outscale=minimum_outscale)
+            except TypeError:
+                # Back-compat: some test doubles / legacy upscalers only accept (image).
+                enhanced = upscaler.upscale(image)
             backend = getattr(upscaler, "last_backend", "unknown")
             logger.info("Image enhanced via %s backend", backend)
             return enhanced

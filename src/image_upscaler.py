@@ -792,6 +792,11 @@ class ImageUpscaler:
         passes = 0
         max_passes = max(1, self.max_passes)
 
+        # Tracks whether the last Real-ESRGAN pass had to downshift due to memory.
+        # When that happens and we've exhausted our pass budget, we should avoid
+        # forcing the remaining scale via interpolation.
+        self._last_realesrgan_pass_used_fallback = False
+
         while passes < max_passes:
             remaining = target / accumulated
             if remaining <= min_scale:
@@ -817,7 +822,10 @@ class ImageUpscaler:
         if passes == 0:
             return None
 
-        if accumulated < target - 1e-2:
+        if accumulated < target - 1e-2 and not (
+            getattr(self, "_last_realesrgan_pass_used_fallback", False)
+            and passes >= max_passes
+        ):
             scale_factor = target / accumulated
             current = self._resize_with_factor(current, scale_factor)
 
@@ -850,6 +858,7 @@ class ImageUpscaler:
 
         try:
             result, _ = self._realesrgan.enhance(image, outscale=requested_scale)
+            self._last_realesrgan_pass_used_fallback = False
             return result
         except Exception as exc:
             if self._is_memory_error(exc) and requested_scale > 2.0:
@@ -863,6 +872,7 @@ class ImageUpscaler:
                 )
                 try:
                     result, _ = self._realesrgan.enhance(image, outscale=fallback_scale)
+                    self._last_realesrgan_pass_used_fallback = True
                     return result
                 except Exception as fallback_exc:
                     logger.error(
@@ -871,6 +881,7 @@ class ImageUpscaler:
                         fallback_exc,
                         exc_info=True,
                     )
+                    self._last_realesrgan_pass_used_fallback = False
                     return None
 
             logger.error(
@@ -879,6 +890,7 @@ class ImageUpscaler:
                 exc,
                 exc_info=True,
             )
+            self._last_realesrgan_pass_used_fallback = False
             return None
         finally:
             if disable_tiling and original_tile is not None:

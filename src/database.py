@@ -233,6 +233,8 @@ class RestFirestoreClient:
         self._api_root = "https://firestore.googleapis.com/v1"
         self._database_path = f"projects/{project}/databases/{self._database}"
         self._documents_base = f"{self._api_root}/{self._database_path}/documents"
+        # Use a session to reuse TCP connections
+        self._session = requests.Session()
 
     def collection(self, name: str):
         return RestCollection(self, name)
@@ -245,9 +247,66 @@ class RestFirestoreClient:
         token = _get_bearer_token_from_credentials(self._creds)
         return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Optional[dict] = None,
+        json_body: Optional[dict] = None,
+        timeout: Optional[float] = None,
+        max_retries: Optional[int] = None,
+    ):
+        """HTTP helper with exponential backoff for 429/5xx."""
+
+        cfg = get_config()
+        if timeout is None:
+            timeout = float(getattr(cfg, "FIRESTORE_REST_TIMEOUT_SECONDS", 20.0))
+        if max_retries is None:
+            max_retries = int(getattr(cfg, "FIRESTORE_REST_MAX_RETRIES", 5))
+        if max_retries < 1:
+            max_retries = 1
+
+        retryable = {429, 500, 502, 503, 504}
+        last_exc: Optional[Exception] = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = self._session.request(
+                    method,
+                    url,
+                    headers=self._auth_headers(),
+                    params=params,
+                    json=json_body,
+                    timeout=timeout,
+                )
+                if resp.status_code in retryable and attempt < max_retries:
+                    retry_after = resp.headers.get("Retry-After")
+                    if retry_after:
+                        try:
+                            sleep_s = float(retry_after)
+                        except Exception:
+                            sleep_s = 0.0
+                    else:
+                        sleep_s = min(30.0, 0.6 * (2 ** (attempt - 1)))
+                        sleep_s += 0.1 * (attempt - 1)
+                    time.sleep(max(0.25, sleep_s))
+                    continue
+                return resp
+            except Exception as exc:  # pragma: no cover
+                last_exc = exc
+                if attempt < max_retries:
+                    time.sleep(min(30.0, 0.6 * (2 ** (attempt - 1))))
+                    continue
+                raise
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("Firestore REST request failed")
+
     def database_exists(self) -> bool:
         url = f"{self._api_root}/{self._database_path}"
-        resp = requests.get(url, headers=self._auth_headers())
+        resp = self._request("GET", url)
         if resp.status_code == 404:
             return False
         if resp.status_code == 403:
@@ -272,9 +331,7 @@ class RestFirestoreClient:
             "type": "FIRESTORE_NATIVE",
             "locationId": self._location_id,
         }
-        resp = requests.post(
-            url, headers=self._auth_headers(), params=params, json=body
-        )
+        resp = self._request("POST", url, params=params, json_body=body)
         if resp.status_code == 409:
             return
         if resp.status_code == 403:
@@ -291,7 +348,7 @@ class RestFirestoreClient:
         deadline = time.time() + timeout
         url = f"{self._api_root}/{operation_name}"
         while time.time() < deadline:
-            resp = requests.get(url, headers=self._auth_headers())
+            resp = self._request("GET", url, max_retries=5)
             resp.raise_for_status()
             payload = resp.json()
             if payload.get("done"):
@@ -303,22 +360,30 @@ class RestFirestoreClient:
             time.sleep(2)
         raise TimeoutError("Timed out waiting for Firestore admin operation to finish")
 
-    def list_documents(self, collection_path: str):
+    def list_documents(self, collection_path: str, page_size: int = 250):
+        """Yield all documents in a collection, handling pagination."""
         url = f"{self._documents_base}/{collection_path}"
-        resp = requests.get(url, headers=self._auth_headers())
-        if resp.status_code == 404:
-            return []
-        resp.raise_for_status()
-        data = resp.json()
-        docs = data.get("documents", [])
-        for d in docs:
-            name = d.get("name")
-            fields = d.get("fields", {})
-            yield RestDocumentSnapshot(name, fields)
+        page_token: Optional[str] = None
+        while True:
+            params = {"pageSize": int(page_size)}
+            if page_token:
+                params["pageToken"] = page_token
+            resp = self._request("GET", url, params=params)
+            if resp.status_code == 404:
+                return
+            resp.raise_for_status()
+            data = resp.json() or {}
+            for d in data.get("documents", []) or []:
+                name = d.get("name")
+                fields = d.get("fields", {})
+                yield RestDocumentSnapshot(name, fields)
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                return
 
     def get_document(self, collection_path: str, doc_id: str):
         url = f"{self._documents_base}/{collection_path}/{doc_id}"
-        resp = requests.get(url, headers=self._auth_headers())
+        resp = self._request("GET", url)
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
@@ -365,18 +430,16 @@ class RestFirestoreClient:
         if merge:
             # Merges must target an existing document
             url = f"{self._documents_base}/{collection_path}/{doc_id}"
-            resp = requests.patch(url, headers=self._auth_headers(), json=body)
+            resp = self._request("PATCH", url, json_body=body)
         else:
             # Firestore REST API requires POST for creating documents with custom IDs
             url = f"{self._documents_base}/{collection_path}"
             params = {"documentId": doc_id}
-            resp = requests.post(
-                url, headers=self._auth_headers(), params=params, json=body
-            )
+            resp = self._request("POST", url, params=params, json_body=body)
             if resp.status_code == 409:
                 # Document already exists, fall back to patch/overwrite
                 url = f"{self._documents_base}/{collection_path}/{doc_id}"
-                resp = requests.patch(url, headers=self._auth_headers(), json=body)
+                resp = self._request("PATCH", url, json_body=body)
 
         if resp.status_code in (200, 201):
             return True
@@ -386,7 +449,7 @@ class RestFirestoreClient:
 
     def delete_document(self, collection_path: str, doc_id: str):
         url = f"{self._documents_base}/{collection_path}/{doc_id}"
-        resp = requests.delete(url, headers=self._auth_headers())
+        resp = self._request("DELETE", url)
         if resp.status_code in (200, 204):
             return True
         if resp.status_code == 404:
@@ -415,6 +478,44 @@ class RestFirestoreClient:
 
         return _Q(filtered)
 
+    def aggregate_count(self, collection_path: str) -> int:
+        """Count documents in a collection using Firestore runAggregationQuery.
+
+        This avoids listing every document (helps prevent 429s on large datasets).
+        """
+        url = f"{self._api_root}/{self._database_path}/documents:runAggregationQuery"
+        body = {
+            "structuredAggregationQuery": {
+                "structuredQuery": {
+                    "from": [
+                        {"collectionId": collection_path, "allDescendants": False}
+                    ],
+                },
+                "aggregations": [{"alias": "count", "count": {}}],
+            }
+        }
+        resp = self._request("POST", url, json_body=body)
+        resp.raise_for_status()
+
+        # Response is newline-delimited JSON objects.
+        count_value = 0
+        for line in (resp.text or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+                result = payload.get("result", {})
+                agg = result.get("aggregateFields", {})
+                c = agg.get("count", {})
+                if "integerValue" in c:
+                    count_value = int(c["integerValue"])
+                elif "doubleValue" in c:
+                    count_value = int(float(c["doubleValue"]))
+            except Exception:
+                continue
+        return count_value
+
 
 logger = setup_logger(__name__)
 config = get_config()
@@ -433,6 +534,28 @@ EMBEDDING_WEIGHTS = getattr(
 class FaceDatabase:
     """Local JSON, Firestore, or Firebase Realtime DB-backed face database."""
 
+    # Class-level cache for statistics to prevent rate limiting
+    _stats_cache: Dict[str, Any] = {}
+    _stats_cache_time: float = 0
+    _STATS_CACHE_TTL: float = float(
+        getattr(
+            config,
+            "STATS_CACHE_TTL",
+            getattr(config, "FIRESTORE_STATS_CACHE_TTL", 300.0),
+        )
+    )
+    _STATS_ERROR_CACHE_TTL: float = float(
+        getattr(config, "STATS_ERROR_CACHE_TTL", 30.0)
+    )
+    _STATS_MAX_COOLDOWN: float = float(getattr(config, "STATS_MAX_COOLDOWN", 300.0))
+    _stats_next_refresh_time: float = 0.0
+    _stats_consecutive_failures: int = 0
+
+    # Class-level cache for all faces (for search operations)
+    _faces_cache: List[Dict[str, Any]] = []
+    _faces_cache_time: float = 0
+    _FACES_CACHE_TTL: float = 30.0  # Cache faces for 30 seconds
+
     def __init__(
         self,
         db_path: Optional[str] = None,
@@ -441,6 +564,14 @@ class FaceDatabase:
         collection_prefix: Optional[str] = None,
     ):
         db_mode = (db_type or getattr(config, "DB_TYPE", "local")).lower()
+        # Back-compat convenience: if Firebase is enabled but DB_TYPE wasn't set,
+        # prefer firebase mode (Realtime DB first, then Firestore fallback).
+        if (
+            db_type is None
+            and db_mode == "local"
+            and bool(getattr(config, "FIREBASE_ENABLED", False))
+        ):
+            db_mode = "firebase"
         if db_path is not None and db_type is None:
             # Explicit local path implies local mode unless overridden
             db_mode = "local"
@@ -449,7 +580,7 @@ class FaceDatabase:
         # - local: JSON file
         # - firestore: force Firestore (error if unavailable)
         # - realtime: force Firebase Realtime DB (error if unavailable)
-        # - firebase: prefer Firestore; fall back to Realtime DB
+        # - firebase: prefer Firebase Realtime DB; fall back to Firestore
         self._db_mode = db_mode
         self.use_firestore = False
         self.use_realtime = False
@@ -476,6 +607,9 @@ class FaceDatabase:
         self._google_credentials = None
         self._realtime_db_url: Optional[str] = None
         self._realtime_db_root = getattr(config, "FIREBASE_DB_ROOT", "faces_database")
+        self._stats_cache: Optional[Dict[str, Any]] = None
+        self._stats_cache_ts: float = 0.0
+        self._firestore_read_quota_exhausted: bool = False
 
         def _init_local() -> None:
             self.use_firestore = False
@@ -494,6 +628,7 @@ class FaceDatabase:
                 "faces": [],
                 "metadata": {},
             }
+            self._maybe_bootstrap_firestore_from_local()
             logger.info(
                 "Initialized Firestore FaceDatabase for project %s",
                 getattr(config, "FIREBASE_PROJECT_ID", "unknown"),
@@ -505,6 +640,7 @@ class FaceDatabase:
             self._init_realtime_database()
             # Fail fast if credentials cannot be refreshed.
             _get_bearer_token_from_credentials(self._google_credentials)
+            self._maybe_bootstrap_realtime_from_local()
             self.data = self._load_database()
             logger.info(
                 "Initialized Firebase Realtime FaceDatabase at %s",
@@ -513,43 +649,286 @@ class FaceDatabase:
             return
 
         if db_mode == "firebase":
+            # Prefer Realtime DB first (user expectation for live updates). If unavailable
+            # due to network/auth/config, fall back to Firestore, then local.
+            self.use_firestore = False
+            self.use_realtime = True
             try:
-                self.use_firestore = True
-                self._init_firestore()
-                self.data = {
-                    "version": "1.0",
-                    "created_at": datetime.now().isoformat(),
-                    "faces": [],
-                    "metadata": {},
-                }
-                logger.info("Using Firestore as primary database (firebase mode)")
+                self._init_realtime_database()
+                # Fail fast if credentials cannot be refreshed.
+                _get_bearer_token_from_credentials(self._google_credentials)
+                self._maybe_bootstrap_realtime_from_local()
+                self.data = self._load_database()
+                logger.info(
+                    "Using Firebase Realtime DB as primary database (firebase mode)"
+                )
                 return
             except Exception as exc:
                 logger.warning(
-                    "Firestore unavailable; falling back to Firebase Realtime DB: %s",
+                    "Realtime DB unavailable; falling back to Firestore: %s",
                     exc,
                 )
-                self.use_firestore = False
-                self.use_realtime = True
+                self.use_realtime = False
+                self.use_firestore = True
                 try:
-                    self._init_realtime_database()
-                    # Fail fast if credentials cannot be refreshed.
-                    _get_bearer_token_from_credentials(self._google_credentials)
-                    self.data = self._load_database()
+                    self._init_firestore()
+                    self.data = {
+                        "version": "1.0",
+                        "created_at": datetime.now().isoformat(),
+                        "faces": [],
+                        "metadata": {},
+                    }
+                    self._maybe_bootstrap_firestore_from_local()
                     logger.info(
-                        "Using Firebase Realtime DB as primary database (firebase mode)"
+                        "Using Firestore as primary database (firebase mode fallback)"
                     )
                     return
                 except Exception as exc2:
                     logger.warning(
-                        "Realtime DB unavailable; falling back to local JSON DB: %s",
+                        "Firestore unavailable; falling back to local JSON DB: %s",
                         exc2,
                     )
+                    self.use_firestore = False
                     _init_local()
                     return
 
         # Local JSON
         _init_local()
+
+    def _maybe_bootstrap_firestore_from_local(self) -> None:
+        """Optionally seed Firestore with local JSON faces when empty.
+
+        This is off by default and must be enabled via
+        FIRESTORE_BOOTSTRAP_FROM_LOCAL=true.
+        """
+
+        if not self.use_firestore:
+            return
+
+        if not getattr(config, "FIRESTORE_BOOTSTRAP_FROM_LOCAL", False):
+            return
+
+        if not self._faces_collection or not self._firestore_client:
+            return
+
+        try:
+            # Check whether Firestore already has any faces
+            existing = next(
+                iter(
+                    self._firestore_client.list_documents(
+                        self._faces_collection.id, page_size=1
+                    )
+                ),
+                None,
+            )
+            if existing is not None:
+                return
+
+            # Load local JSON faces
+            local_path = self.db_path
+            if not local_path.exists():
+                logger.warning(
+                    "Firestore bootstrap requested but local DB file %s does not exist",
+                    local_path,
+                )
+                return
+
+            with open(local_path, "r") as f:
+                payload = json.load(f)
+            faces = payload.get("faces") if isinstance(payload, dict) else None
+            if not isinstance(faces, list) or not faces:
+                logger.warning(
+                    "Firestore bootstrap requested but local DB has no faces (%s)",
+                    local_path,
+                )
+                return
+
+            logger.warning(
+                "Bootstrapping Firestore with %s faces from %s (collection %s)",
+                len(faces),
+                local_path,
+                self._faces_collection.id,
+            )
+
+            # Upload faces
+            for face in faces:
+                if not isinstance(face, dict):
+                    continue
+                doc_id = face.get("id")
+                if doc_id is None:
+                    doc_ref = self._faces_collection.document()
+                else:
+                    doc_ref = self._faces_collection.document(str(doc_id))
+                self._write_document_with_retry(
+                    doc_ref, face, merge=False, retries=5, delay=1.0
+                )
+                # Small throttle to reduce write bursts (helps avoid 429)
+                time.sleep(0.1)
+
+            # Invalidate cached stats
+            self._stats_cache = None
+            self._stats_cache_ts = 0.0
+        except Exception as exc:
+            # Common in free-tier projects: Firestore daily read quota exhausted.
+            if self._mark_firestore_read_quota_exhausted(exc):
+                logger.warning(
+                    "Skipping Firestore bootstrap because Firestore reads are throttled/quota-exhausted. "
+                    "Enable billing or wait for quota reset, then restart to bootstrap."
+                )
+                return
+            logger.error("Failed to bootstrap Firestore from local JSON: %s", exc)
+
+    def _maybe_bootstrap_realtime_from_local(self) -> None:
+        """Optionally seed Firebase Realtime DB with local JSON faces when empty.
+
+        Disabled by default; enable via REALTIME_BOOTSTRAP_FROM_LOCAL=true.
+        """
+
+        if not self.use_realtime:
+            return
+
+        if not getattr(config, "REALTIME_BOOTSTRAP_FROM_LOCAL", False):
+            return
+
+        if not self._realtime_db_url:
+            return
+
+        try:
+            token = _get_bearer_token_from_credentials(self._google_credentials)
+            url = f"{self._realtime_db_url}/{self._realtime_db_root}.json"
+            resp = requests.get(url, headers={"Authorization": f"Bearer {token}"})
+
+            # Only bootstrap when the endpoint is accessible and empty.
+            if resp.status_code == 404:
+                remote_payload: Dict[str, Any] = {
+                    "version": "1.0",
+                    "created_at": datetime.now().isoformat(),
+                    "faces": [],
+                    "metadata": {},
+                }
+            else:
+                if resp.status_code in (401, 403):
+                    logger.warning(
+                        "Realtime DB bootstrap requested but access is denied (%s) for %s",
+                        resp.status_code,
+                        url,
+                    )
+                    return
+                resp.raise_for_status()
+                remote_payload = resp.json() or {}
+
+            remote_faces = (
+                remote_payload.get("faces")
+                if isinstance(remote_payload, dict)
+                else None
+            )
+            remote_faces_list: List[Dict[str, Any]] = []
+            if isinstance(remote_faces, list):
+                remote_faces_list = [f for f in remote_faces if isinstance(f, dict)]
+
+            local_path = self.db_path
+            if not local_path.exists():
+                logger.warning(
+                    "Realtime DB bootstrap requested but local DB file %s does not exist",
+                    local_path,
+                )
+                return
+
+            with open(local_path, "r") as f:
+                local_payload = json.load(f)
+            local_faces = (
+                local_payload.get("faces") if isinstance(local_payload, dict) else None
+            )
+            if not isinstance(local_faces, list) or not local_faces:
+                logger.warning(
+                    "Realtime DB bootstrap requested but local DB has no faces (%s)",
+                    local_path,
+                )
+                return
+
+            local_faces_list = [f for f in local_faces if isinstance(f, dict)]
+            remote_ids = {
+                f.get("id")
+                for f in remote_faces_list
+                if isinstance(f.get("id"), (int, str))
+            }
+            missing = [
+                f
+                for f in local_faces_list
+                if isinstance(f.get("id"), (int, str)) and f.get("id") not in remote_ids
+            ]
+            if not missing:
+                return
+
+            logger.warning(
+                "Bootstrapping Realtime DB: adding %s missing faces from %s (root %s)",
+                len(missing),
+                local_path,
+                self._realtime_db_root,
+            )
+
+            merged: Dict[str, Any] = {}
+            if isinstance(local_payload, dict):
+                merged.update(local_payload)
+            if isinstance(remote_payload, dict):
+                merged.update(remote_payload)
+
+            merged["faces"] = list(remote_faces_list) + missing
+
+            local_meta = (
+                local_payload.get("metadata")
+                if isinstance(local_payload, dict)
+                else None
+            )
+            remote_meta = (
+                remote_payload.get("metadata")
+                if isinstance(remote_payload, dict)
+                else None
+            )
+            merged_meta: Dict[str, Any] = {}
+            if isinstance(local_meta, dict):
+                merged_meta.update(local_meta)
+            if isinstance(remote_meta, dict):
+                merged_meta.update(remote_meta)
+            merged["metadata"] = merged_meta
+
+            if not merged.get("created_at"):
+                merged["created_at"] = datetime.now().isoformat()
+            if not merged.get("version"):
+                merged["version"] = "1.0"
+
+            put_resp = requests.put(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=merged,
+            )
+            put_resp.raise_for_status()
+        except Exception as exc:
+            logger.warning(
+                "Failed to bootstrap Realtime DB from local DB: %s",
+                exc,
+            )
+
+    def _mark_firestore_read_quota_exhausted(self, exc: Exception) -> bool:
+        """Detect 429 quota exhaustion and mark Firestore reads as unavailable."""
+        try:
+            resp = getattr(exc, "response", None)
+            status = getattr(resp, "status_code", None)
+            if status != 429:
+                return False
+        except Exception:
+            return False
+
+        if not self._firestore_read_quota_exhausted:
+            self._firestore_read_quota_exhausted = True
+            logger.error(
+                "Firestore read quota exhausted (HTTP 429). Falling back to local JSON for reads. "
+                "Fix: enable billing in GCP/Firebase or wait for daily quota reset."
+            )
+        return True
 
     @staticmethod
     def _normalize_embedding_vector(embedding: Optional[List[float]]) -> np.ndarray:
@@ -688,9 +1067,37 @@ class FaceDatabase:
             if isinstance(firebase_config, dict)
             else None
         )
-        derived_url = f"https://{project_id}.firebaseio.com"
 
-        self._realtime_db_url = (explicit_url or config_url or derived_url).rstrip("/")
+        # Realtime DB hostnames vary depending on instance type:
+        # - Legacy default: https://<project-id>.firebaseio.com
+        # - New default instance: https://<project-id>-default-rtdb.firebaseio.com
+        candidates = [
+            explicit_url,
+            config_url,
+            f"https://{project_id}.firebaseio.com",
+            f"https://{project_id}-default-rtdb.firebaseio.com",
+        ]
+        candidates = [c.rstrip("/") for c in candidates if c]
+
+        token = _get_bearer_token_from_credentials(self._google_credentials)
+
+        chosen: Optional[str] = None
+        for base in candidates:
+            try:
+                probe = requests.get(
+                    f"{base}/.json",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                )
+                # 404 usually means wrong hostname/instance; any other status means
+                # the endpoint exists (even if rules deny access).
+                if probe.status_code != 404:
+                    chosen = base
+                    break
+            except Exception:
+                continue
+
+        self._realtime_db_url = (chosen or candidates[0]).rstrip("/")
 
     def _resolve_google_credentials(
         self, scopes: List[str]
@@ -790,11 +1197,95 @@ class FaceDatabase:
         self, username: Optional[str] = None
     ) -> Iterable[Dict[str, Any]]:
         if not self._faces_collection:
-            return []
+            return iter(())
+
+        # If reads are known to be quota-exhausted, immediately fall back.
+        if self._firestore_read_quota_exhausted:
+            local_payload = self._load_database()
+            faces = (
+                local_payload.get("faces") if isinstance(local_payload, dict) else []
+            )
+            if username:
+                return (
+                    f
+                    for f in faces
+                    if isinstance(f, dict) and f.get("username") == username
+                )
+            return iter(faces)
+
         query = self._faces_collection
         if username:
             query = query.where("username", "==", username)
-        return (self._firestore_face_from_snapshot(doc) for doc in query.stream())
+
+        def _iter():
+            try:
+                for doc in query.stream():
+                    yield self._firestore_face_from_snapshot(doc)
+            except Exception as exc:  # pragma: no cover - network dependent
+                if self._mark_firestore_read_quota_exhausted(exc):
+                    local_payload = self._load_database()
+                    faces = (
+                        local_payload.get("faces")
+                        if isinstance(local_payload, dict)
+                        else []
+                    )
+                    for face in faces:
+                        if not isinstance(face, dict):
+                            continue
+                        if username and face.get("username") != username:
+                            continue
+                        yield face
+                    return
+                raise
+
+        return _iter()
+
+    def get_all_faces_cached(self) -> List[Dict[str, Any]]:
+        """Get all faces with caching to prevent rate limiting."""
+        now = time.time()
+
+        # Return cached faces if still valid
+        if (
+            FaceDatabase._faces_cache
+            and (now - FaceDatabase._faces_cache_time) < FaceDatabase._FACES_CACHE_TTL
+        ):
+            logger.debug(
+                "Using cached faces list (%d faces)", len(FaceDatabase._faces_cache)
+            )
+            return FaceDatabase._faces_cache
+
+        try:
+            if self.use_firestore:
+                faces = list(self._firestore_faces_iter())
+            elif self.use_realtime:
+                faces = self.data.get("faces", [])
+            else:
+                faces = self.data.get("faces", [])
+
+            # Update cache
+            FaceDatabase._faces_cache = faces
+            FaceDatabase._faces_cache_time = now
+            logger.info("Refreshed faces cache: %d faces", len(faces))
+            return faces
+        except Exception as e:
+            logger.error(f"Error getting all faces: {e}")
+            # Return stale cache if available
+            if FaceDatabase._faces_cache:
+                logger.info("Returning stale cached faces due to error")
+                return FaceDatabase._faces_cache
+            # Set empty cache for shorter duration to prevent repeated failed requests
+            now = time.time()
+            FaceDatabase._faces_cache = []
+            FaceDatabase._faces_cache_time = now - FaceDatabase._FACES_CACHE_TTL + 10
+            return []
+
+    def invalidate_cache(self) -> None:
+        """Invalidate all caches (call after adding/removing faces)."""
+        FaceDatabase._stats_cache = {}
+        FaceDatabase._stats_cache_time = 0
+        FaceDatabase._faces_cache = []
+        FaceDatabase._faces_cache_time = 0
+        logger.debug("Database caches invalidated")
 
     def _write_document_with_retry(
         self,
@@ -1049,7 +1540,8 @@ class FaceDatabase:
                 face_record["id"] = doc_ref.id
                 if not self._write_document_with_retry(doc_ref, face_record):
                     return False
-                # Refresh centroid/profile cache for this user
+                # Invalidate caches and refresh centroid/profile cache for this user
+                self.invalidate_cache()
                 self.get_profile_embedding_for_username(username, force_refresh=True)
                 logger.info(
                     "Stored face for %s in Firestore collection %s",
@@ -1062,6 +1554,7 @@ class FaceDatabase:
             self.data["faces"].append(face_record)
 
             if self._save_database():
+                self.invalidate_cache()
                 self.get_profile_embedding_for_username(username, force_refresh=True)
                 logger.info(
                     "Successfully added face for user %s from %s (embedding_dim=%s)",
@@ -1410,15 +1903,10 @@ class FaceDatabase:
 
             results: List[Dict[str, Any]] = []
 
-            faces_iter: Iterable[Dict[str, Any]]
-            if self.use_firestore:
-                faces_iter = list(self._firestore_faces_iter())
-                if not faces_iter:
-                    return []
-            else:
-                faces_iter = self.data["faces"]
-                if not faces_iter:
-                    return []
+            # Use cached faces to avoid rate limiting
+            faces_iter: List[Dict[str, Any]] = self.get_all_faces_cached()
+            if not faces_iter:
+                return []
 
             for face in faces_iter:
                 stored_bundle = face.get("embeddings") or {}
@@ -1474,7 +1962,38 @@ class FaceDatabase:
 
     def get_statistics(self) -> Dict[str, Any]:
         try:
+            # Firestore stats can be expensive; cache briefly to avoid Streamlit rerun storms.
             if self.use_firestore:
+                ttl = float(getattr(config, "FIRESTORE_STATS_CACHE_TTL_SECONDS", 10.0))
+                now = time.time()
+                if self._stats_cache is not None and (now - self._stats_cache_ts) < ttl:
+                    return dict(self._stats_cache)
+
+                if self._firestore_read_quota_exhausted:
+                    local_payload = self._load_database()
+                    faces = (
+                        local_payload.get("faces", [])
+                        if isinstance(local_payload, dict)
+                        else []
+                    )
+                    usernames = set()
+                    sources: Dict[str, int] = {}
+                    for face in faces:
+                        if not isinstance(face, dict):
+                            continue
+                        usernames.add(face.get("username"))
+                        src = face.get("source", "unknown")
+                        sources[src] = sources.get(src, 0) + 1
+                    stats = {
+                        "total_faces": len([f for f in faces if isinstance(f, dict)]),
+                        "unique_users": len([u for u in usernames if u]),
+                        "sources": sources,
+                        "created_at": local_payload.get("created_at"),
+                    }
+                    self._stats_cache = dict(stats)
+                    self._stats_cache_ts = now
+                    return stats
+
                 usernames = set()
                 sources: Dict[str, int] = {}
                 total = 0
@@ -1483,28 +2002,151 @@ class FaceDatabase:
                     usernames.add(face.get("username"))
                     src = face.get("source", "unknown")
                     sources[src] = sources.get(src, 0) + 1
-                return {
+
+                stats = {
                     "total_faces": total,
                     "unique_users": len([u for u in usernames if u]),
                     "sources": sources,
                     "created_at": self.data.get("created_at"),
                 }
+                self._stats_cache = dict(stats)
+                self._stats_cache_ts = now
+                return stats
 
-            usernames = set(face["username"] for face in self.data["faces"])
+            faces = self.data.get("faces", []) if isinstance(self.data, dict) else []
+            usernames = set()
             sources: Dict[str, int] = {}
-            for face in self.data["faces"]:
-                source = face["source"]
-                sources[source] = sources.get(source, 0) + 1
+            for face in faces:
+                if not isinstance(face, dict):
+                    continue
+                usernames.add(face.get("username"))
+                src = face.get("source", "unknown")
+                sources[src] = sources.get(src, 0) + 1
 
             return {
-                "total_faces": len(self.data["faces"]),
-                "unique_users": len(usernames),
+                "total_faces": len([f for f in faces if isinstance(f, dict)]),
+                "unique_users": len([u for u in usernames if u]),
                 "sources": sources,
-                "created_at": self.data["created_at"],
+                "created_at": (
+                    self.data.get("created_at") if isinstance(self.data, dict) else None
+                ),
             }
         except Exception as e:
+            if self.use_firestore and self._mark_firestore_read_quota_exhausted(e):
+                local_payload = self._load_database()
+                faces = (
+                    local_payload.get("faces", [])
+                    if isinstance(local_payload, dict)
+                    else []
+                )
+                usernames = set()
+                sources: Dict[str, int] = {}
+                for face in faces:
+                    if not isinstance(face, dict):
+                        continue
+                    usernames.add(face.get("username"))
+                    src = face.get("source", "unknown")
+                    sources[src] = sources.get(src, 0) + 1
+                return {
+                    "total_faces": len([f for f in faces if isinstance(f, dict)]),
+                    "unique_users": len([u for u in usernames if u]),
+                    "sources": sources,
+                    "created_at": local_payload.get("created_at"),
+                }
+
             logger.error(f"Error getting statistics: {e}")
             return {}
+
+    def get_backend_status(self) -> Dict[str, Any]:
+        """Return a small diagnostic payload describing the active DB backend.
+
+        This is intended for UI diagnostics (e.g., Streamlit) so users can verify
+        whether Firestore is actually being used, and if not, why.
+        """
+
+        status: Dict[str, Any] = {
+            "ok": True,
+            "backend": self._db_mode,
+        }
+
+        if self.use_firestore:
+            status.update(
+                {
+                    "backend": "firestore",
+                    "project_id": self._project_id_override
+                    or getattr(config, "FIREBASE_PROJECT_ID", None),
+                    "database_id": getattr(self, "_database_id", "(default)"),
+                    "location_id": getattr(self, "_firestore_location", None),
+                    "collection_prefix": getattr(self, "_collection_prefix", None),
+                    "faces_collection": getattr(self._faces_collection, "id", None),
+                    "profiles_collection": getattr(
+                        self._profiles_collection, "id", None
+                    ),
+                }
+            )
+            try:
+                if not self._firestore_client:
+                    raise RuntimeError("Firestore client not initialized")
+                # Validate token refresh & database availability.
+                _get_bearer_token_from_credentials(self._google_credentials)
+                status["database_exists"] = bool(
+                    self._firestore_client.database_exists()
+                )
+
+                # Optional lightweight read: attempt to fetch one document ID.
+                sample_id = None
+                try:
+                    faces_col = status.get("faces_collection")
+                    if isinstance(faces_col, str) and faces_col:
+                        iterator = self._firestore_client.list_documents(faces_col)
+                        first = next(iterator, None)
+                        if first is not None:
+                            sample_id = getattr(first, "id", None)
+                except Exception:
+                    # Don't fail the whole status call for a sample read.
+                    pass
+
+                status["sample_document_id"] = sample_id
+                return status
+            except Exception as exc:
+                status["ok"] = False
+                status["error"] = str(exc)
+                return status
+
+        if self.use_realtime:
+            status.update(
+                {
+                    "backend": "realtime",
+                    "project_id": self._project_id_override
+                    or getattr(config, "FIREBASE_PROJECT_ID", None),
+                    "database_url": getattr(self, "_realtime_db_url", None),
+                    "db_root": getattr(self, "_realtime_db_root", None),
+                }
+            )
+            try:
+                _get_bearer_token_from_credentials(self._google_credentials)
+                return status
+            except Exception as exc:
+                status["ok"] = False
+                status["error"] = str(exc)
+                return status
+
+        # Local JSON
+        try:
+            status.update(
+                {
+                    "backend": "local",
+                    "db_path": str(self.db_path),
+                    "db_exists": bool(self.db_path.exists()),
+                    "db_size_bytes": (
+                        int(self.db_path.stat().st_size) if self.db_path.exists() else 0
+                    ),
+                }
+            )
+        except Exception as exc:
+            status["ok"] = False
+            status["error"] = str(exc)
+        return status
 
     def clear_database(self) -> bool:
         try:

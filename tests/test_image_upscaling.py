@@ -161,7 +161,7 @@ def test_realesrgan_remainder_uses_resize(monkeypatch):
 
 
 def test_prepare_input_image_invokes_upscaler(monkeypatch):
-    """The preprocessing path should always call the configured upscaler first."""
+    """The preprocessing path should call the upscaler when enhancement is requested."""
 
     class DummyUpscaler:
         def __init__(self):
@@ -176,7 +176,10 @@ def test_prepare_input_image_invokes_upscaler(monkeypatch):
 
     original = np.ones((8, 8, 3), dtype=np.uint8)
     processed = image_utils.ImageProcessor.prepare_input_image(
-        original, max_width=8, max_height=8
+        original,
+        max_width=8,
+        max_height=8,
+        enhance=True,
     )
 
     assert dummy.calls == 1
