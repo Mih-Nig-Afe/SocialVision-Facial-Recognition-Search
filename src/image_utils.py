@@ -141,7 +141,9 @@ class ImageProcessor:
         max_height: int = 1400,
     ) -> np.ndarray:
         """Resize image before sending to recognition pipeline."""
-        working = ImageProcessor.enhance_image(image) if EAGER_PREUPSCALE else image
+        # Always attempt to run the configured upscaler first.
+        # The upscaler itself can decide to no-op when not needed.
+        working = ImageProcessor.enhance_image(image)
         return ImageProcessor.resize_image(working, max_width, max_height)
 
     @staticmethod
@@ -155,7 +157,11 @@ class ImageProcessor:
             return image
 
         try:
-            enhanced = upscaler.upscale(image, minimum_outscale=minimum_outscale)
+            try:
+                enhanced = upscaler.upscale(image, minimum_outscale=minimum_outscale)
+            except TypeError:
+                # Back-compat: some test doubles / legacy upscalers only accept (image).
+                enhanced = upscaler.upscale(image)
             backend = getattr(upscaler, "last_backend", "unknown")
             logger.info("Image enhanced via %s backend", backend)
             return enhanced

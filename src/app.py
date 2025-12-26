@@ -3,17 +3,13 @@ SocialVision: Advanced Facial Recognition Search Engine
 Main Streamlit Application
 """
 
+from __future__ import annotations
 import streamlit as st
 from pathlib import Path
 import numpy as np
+from typing import Optional
 from src.config import get_config
 from src.logger import setup_logger
-from src.face_recognition_engine import FaceRecognitionEngine
-from src.database import FaceDatabase
-from src.search_engine import SearchEngine
-from src.image_utils import ImageProcessor, VideoProcessor
-from src.image_upscaler import get_image_upscaler
-from src.face_quality import AutoFaceImprover, FaceQualityAssessor
 
 # Try to import cv2, but make it optional
 try:
@@ -23,18 +19,19 @@ try:
 except ImportError:
     HAS_CV2 = False
 
-# Try to import streamlit-webrtc for live camera
+# Try to import streamlit-webrtc for live camera (works outside Docker)
 try:
-    from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, WebRtcMode
+    from streamlit_webrtc import webrtc_streamer, WebRtcMode
     import av
 
     HAS_WEBRTC = True
 except ImportError:
     HAS_WEBRTC = False
     webrtc_streamer = None
-    VideoProcessorBase = object
+    WebRtcMode = None
+    av = None
 
-# Configuration
+# Configuration (lightweight)
 config = get_config()
 DEFAULT_EMBEDDING_SOURCE = getattr(config, "DEFAULT_EMBEDDING_SOURCE", "deepface")
 logger = setup_logger(__name__)
@@ -95,13 +92,43 @@ def _infer_temp_suffix(filename: str | None) -> str:
 
 @st.cache_resource
 def initialize_components():
-    """Initialize and cache components"""
+    """Initialize and cache components - lazy loaded for faster startup"""
+    # Import heavy modules only when needed
+    from src.face_recognition_engine import FaceRecognitionEngine
+    from src.database import FaceDatabase
+    from src.search_engine import SearchEngine
+    from src.face_quality import AutoFaceImprover, FaceQualityAssessor
+
     db = FaceDatabase()
     search_engine = SearchEngine(db)
     face_engine = FaceRecognitionEngine(database=db)
     auto_improver = AutoFaceImprover(face_engine, db)
     quality_assessor = FaceQualityAssessor()
     return db, search_engine, face_engine, auto_improver, quality_assessor
+
+
+@st.cache_resource
+def get_image_processor():
+    """Lazy load image processor"""
+    from src.image_utils import ImageProcessor
+
+    return ImageProcessor
+
+
+@st.cache_resource
+def get_video_processor():
+    """Lazy load video processor"""
+    from src.image_utils import VideoProcessor
+
+    return VideoProcessor
+
+
+@st.cache_resource
+def get_upscaler():
+    """Lazy load image upscaler"""
+    from src.image_upscaler import get_image_upscaler
+
+    return get_image_upscaler()
 
 
 def main():
@@ -186,6 +213,9 @@ def main():
             horizontal=True,
         )
 
+        # Get lazy-loaded processors
+        ImageProcessor = get_image_processor()
+
         def _load_image_from_upload(uploaded) -> np.ndarray | None:
             try:
                 return ImageProcessor.load_image_from_bytes(uploaded.getbuffer())
@@ -194,7 +224,7 @@ def main():
 
         def _run_image_search(raw_image: np.ndarray, label: str) -> None:
             processed_image = ImageProcessor.prepare_input_image(raw_image)
-            backend_code = get_image_upscaler().last_backend
+            backend_code = get_upscaler().last_backend
             framed_preview = ImageProcessor.frame_image_for_display(
                 processed_image, frame_size=DISPLAY_FRAME
             )
@@ -270,124 +300,179 @@ def main():
                         _run_image_search(raw_image, "Uploaded Image")
 
         elif input_mode == "Live camera":
-            st.info(
-                "📹 **Real-time face recognition** - Faces are detected and identified live on camera feed"
+            # Check if running in Docker (WebRTC won't work properly)
+            import os
+
+            in_docker = os.path.exists("/.dockerenv") or os.environ.get(
+                "DOCKER_CONTAINER", False
             )
+            webrtc_active = False
 
-            if not HAS_WEBRTC:
-                st.error(
-                    "streamlit-webrtc is not installed. Please rebuild the Docker container."
+            if HAS_WEBRTC and not in_docker:
+                # Real-time WebRTC mode (works outside Docker)
+                st.info(
+                    "📹 **Real-time face recognition** - Live video with face detection"
                 )
-            else:
-                from src.live_recognition import LiveRecognitionProcessor
-
-                # Create video processor class for webrtc
-                class FaceRecognitionVideoProcessor(VideoProcessorBase):
-                    def __init__(self):
-                        self._processor = None
-
-                    def recv(self, frame):
-                        import av
-
-                        img = frame.to_ndarray(format="bgr24")
-
-                        # Lazy init the processor
-                        if self._processor is None:
-                            self._processor = LiveRecognitionProcessor(
-                                search_engine=search_engine,
-                                face_engine=face_engine,
-                                threshold=similarity_threshold,
-                            )
-
-                        # Process frame with face recognition overlays
-                        processed = self._processor.process_frame(img)
-
-                        return av.VideoFrame.from_ndarray(processed, format="bgr24")
+                from src.live_recognition import create_video_processor_factory
 
                 st.caption(
-                    "Faces will be detected and matched against the database in real-time. "
-                    "Green boxes = recognized, Orange boxes = unknown."
+                    "Faces will be detected and matched in real-time. "
+                    "Green = recognized, Orange = unknown."
                 )
 
-                # WebRTC streamer for live video
-                webrtc_ctx = webrtc_streamer(
-                    key="live-face-recognition",
-                    mode=WebRtcMode.SENDRECV,
-                    video_processor_factory=FaceRecognitionVideoProcessor,
-                    media_stream_constraints={
-                        "video": {"width": 640, "height": 480},
-                        "audio": False,
-                    },
-                    async_processing=True,
-                    rtc_configuration={
-                        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
-                    },
-                )
+                try:
+                    webrtc_ctx = webrtc_streamer(
+                        key="live-face-recognition",
+                        mode=WebRtcMode.SENDRECV,
+                        video_processor_factory=create_video_processor_factory(
+                            search_engine, face_engine, similarity_threshold
+                        ),
+                        media_stream_constraints={
+                            "video": {"width": 640, "height": 480},
+                            "audio": False,
+                        },
+                        async_processing=True,
+                        rtc_configuration={
+                            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+                        },
+                    )
 
-                if webrtc_ctx.state.playing:
-                    st.success("Live camera is active - recognition running")
-                else:
-                    st.warning("Click START to begin live face recognition")
-
-            # Keep fallback capture mode below
-            st.markdown("---")
-            st.subheader("Manual Capture Mode")
-            st.caption("Alternatively, use manual capture below:")
-            st.caption(
-                "If the browser doesn’t prompt: open the app at http://localhost:8501 (not 0.0.0.0), "
-                "and ensure camera permission is allowed in your browser site settings."
-            )
-
-            if "search_cam_version" not in st.session_state:
-                st.session_state.search_cam_version = 0
-
-            if st.button("Request camera access", key="search_request_camera"):
-                st.session_state.search_cam_version += 1
-                _safe_rerun()
-
-            camera_capture = st.camera_input(
-                "Capture from your camera",
-                key=f"search_camera_{st.session_state.search_cam_version}",
-                help="Click the camera button to capture an image",
-            )
-
-            col1, col2 = st.columns(2)
-            with col1:
-                search_button = st.button("🔍 Search Capture", use_container_width=True)
-            with col2:
-                continuous_mode = st.checkbox(
-                    "Continuous Mode", help="Automatically search on each capture"
-                )
-
-            if camera_capture and (search_button or continuous_mode):
-                with st.spinner("Processing camera capture..."):
-                    raw_image = _load_image_from_upload(camera_capture)
-                    if raw_image is None:
-                        st.error("Failed to decode camera capture")
+                    if webrtc_ctx.state.playing:
+                        st.success("Live recognition active")
                     else:
-                        # Show quality assessment
-                        if enable_auto_improve:
-                            quality_metrics = quality_assessor.assess_quality(raw_image)
-                            col1, col2, col3, col4 = st.columns(4)
-                            with col1:
-                                st.metric(
-                                    "Quality Score",
-                                    f"{quality_metrics['overall_score']:.2f}",
-                                )
-                            with col2:
-                                st.metric(
-                                    "Sharpness", f"{quality_metrics['sharpness']:.2f}"
-                                )
-                            with col3:
-                                st.metric(
-                                    "Brightness", f"{quality_metrics['brightness']:.2f}"
-                                )
-                            with col4:
-                                st.metric(
-                                    "Contrast", f"{quality_metrics['contrast']:.2f}"
-                                )
+                        st.warning("Click START to begin")
+                    webrtc_active = True
+                except Exception as e:
+                    st.warning(f"WebRTC unavailable: {e}. Using capture mode.")
 
-                        _run_image_search(raw_image, "Camera Capture")
+            if not webrtc_active:
+                # Continuous live video with auto face detection
+                import time
+
+                st.info("📹 **Live Camera Recognition** - Capture and detect faces")
+
+                # Initialize session state for live mode
+                if "live_running" not in st.session_state:
+                    st.session_state.live_running = False
+                if "frame_count" not in st.session_state:
+                    st.session_state.frame_count = 0
+                if "last_results" not in st.session_state:
+                    st.session_state.last_results = []
+                if "fast_mode" not in st.session_state:
+                    st.session_state.fast_mode = (
+                        True  # Default to fast mode for responsiveness
+                    )
+                if "auto_capture" not in st.session_state:
+                    st.session_state.auto_capture = False
+
+                # Controls in sidebar-style layout
+                st.markdown("#### ⚙️ Recognition Settings")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.session_state.fast_mode = st.checkbox(
+                        "⚡ Fast mode (recommended)",
+                        value=st.session_state.fast_mode,
+                        help="Fast: ~100-200ms, uses dlib. Unchecked: ~500-1000ms, uses DeepFace",
+                    )
+                with col2:
+                    st.session_state.auto_capture = st.checkbox(
+                        "🔄 Auto-capture",
+                        value=st.session_state.auto_capture,
+                        help="Automatically process frames continuously",
+                    )
+
+                mode_text = (
+                    "⚡ Fast (dlib)"
+                    if st.session_state.fast_mode
+                    else "🎯 Detailed (DeepFace)"
+                )
+                st.caption(
+                    f"Mode: {mode_text} | 🟢 Green = Recognized | 🟠 Orange = Unknown"
+                )
+
+                st.markdown("---")
+
+                # Camera capture - using a stable key
+                camera_capture = st.camera_input(
+                    "📷 Click to capture a frame for face detection",
+                    key="live_camera_capture",
+                )
+
+                # Process captured frame
+                if camera_capture:
+                    from src.fast_recognition import recognize_faces, draw_face_boxes
+
+                    raw_image = _load_image_from_upload(camera_capture)
+                    if raw_image is not None:
+                        st.session_state.frame_count += 1
+
+                        with st.spinner(
+                            f"Processing frame #{st.session_state.frame_count}..."
+                        ):
+                            # Use unified recognize_faces function
+                            faces, labels, scores, proc_time = recognize_faces(
+                                raw_image,
+                                db,
+                                threshold=similarity_threshold,
+                                fast_mode=st.session_state.fast_mode,
+                            )
+
+                        # Display results
+                        if faces:
+                            result_image = draw_face_boxes(
+                                raw_image, faces, labels, scores
+                            )
+                            st.image(
+                                result_image,
+                                channels="BGR",
+                                caption=f"Frame #{st.session_state.frame_count} | {len(faces)} face(s) detected | {proc_time:.0f}ms",
+                            )
+
+                            # Show match details
+                            st.markdown("### 🎯 Detection Results")
+                            cols = st.columns(min(len(faces), 4))
+                            for i, (label, score) in enumerate(zip(labels, scores)):
+                                with cols[i % len(cols)]:
+                                    if label:
+                                        st.success(f"✅ **{label}**\n{score:.1%}")
+                                    else:
+                                        st.warning(f"❓ Unknown #{i+1}")
+
+                            st.session_state.last_results = list(zip(labels, scores))
+                        else:
+                            st.image(
+                                raw_image,
+                                channels="BGR",
+                                caption=f"Frame #{st.session_state.frame_count} - No faces detected ({proc_time:.0f}ms)",
+                            )
+                            st.info(
+                                "No faces detected in this frame. Try adjusting your position or lighting."
+                            )
+
+                        # Auto-capture: automatically trigger new capture
+                        if st.session_state.auto_capture:
+                            interval = 0.5 if st.session_state.fast_mode else 1.0
+                            time.sleep(interval)
+                            _safe_rerun()
+                else:
+                    st.markdown(
+                        """
+                    ### 📸 How to use:
+                    1. **Allow camera access** when prompted by your browser
+                    2. **Click the camera button** above to capture a frame
+                    3. Faces will be detected and matched against the database
+                    4. Enable **Auto-capture** for continuous processing
+
+                    💡 **Tip**: Use **Fast mode** for quicker results (~200ms per frame)
+                    """
+                    )
+
+                    if st.session_state.last_results:
+                        st.markdown("---")
+                        st.markdown("### 📋 Last Detection Results:")
+                        for label, score in st.session_state.last_results:
+                            if label:
+                                st.success(f"✅ **{label}** ({score:.1%})")
 
         else:  # Video upload
             st.write("Upload a short clip; frames are sampled for matches.")
@@ -409,6 +494,7 @@ def main():
             search_video_button = st.button("🔍 Search Video", use_container_width=True)
 
             if video_file and search_video_button:
+                VideoProcessor = get_video_processor()
                 with st.spinner("Sampling frames and searching..."):
                     suffix = _infer_temp_suffix(video_file.name)
                     frames = VideoProcessor.sample_frames_from_bytes(
@@ -577,7 +663,7 @@ def main():
                                 processed_image = ImageProcessor.prepare_input_image(
                                     raw_image
                                 )
-                                backend_code = get_image_upscaler().last_backend
+                                backend_code = get_upscaler().last_backend
                                 framed_preview = ImageProcessor.frame_image_for_display(
                                     processed_image, frame_size=DISPLAY_FRAME
                                 )
@@ -791,6 +877,7 @@ def main():
                     if not video_file:
                         st.error("Please upload a video")
                     else:
+                        VideoProcessor = get_video_processor()
                         with st.spinner("Sampling frames and adding faces..."):
                             suffix = _infer_temp_suffix(video_file.name)
                             frames = VideoProcessor.sample_frames_from_bytes(
@@ -869,13 +956,37 @@ def main():
 
         stats = db.get_statistics()
 
+        if stats.get("error"):
+            st.error(f"Database stats error: {stats['error']}")
+
+        with st.expander("Database Connection"):
+            try:
+                status = db.get_backend_status()
+            except Exception as exc:
+                status = {"ok": False, "error": str(exc)}
+
+            if status.get("ok"):
+                st.success(f"Connected ({status.get('backend', 'unknown')})")
+            else:
+                st.error(
+                    f"Not connected ({status.get('backend', 'unknown')}): {status.get('error', 'unknown error')}"
+                )
+            st.json(status)
+
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Total Faces", stats.get("total_faces", 0))
         with col2:
             st.metric("Unique Users", stats.get("unique_users", 0))
         with col3:
-            st.metric("Database Created", stats.get("created_at", "N/A")[:10])
+            created_at = stats.get("created_at")
+            if isinstance(created_at, str) and created_at:
+                created_display = created_at[:10]
+            elif created_at is not None:
+                created_display = str(created_at)[:10]
+            else:
+                created_display = "N/A"
+            st.metric("Database Created", created_display)
 
         if stats.get("sources"):
             st.subheader("Faces by Source")

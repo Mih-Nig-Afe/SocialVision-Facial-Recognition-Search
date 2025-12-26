@@ -41,6 +41,7 @@ services:
       - ./logs:/app/logs
       - ./models:/app/models
       - ./config:/app/config
+      - ./.streamlit:/app/.streamlit
       - deepface-cache:/root/.deepface
     environment:
       - PYTHONUNBUFFERED=1
@@ -85,6 +86,30 @@ services:
       timeout: 10s
       retries: 3
       start_period: 90s
+
+  socialvision-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: socialvision-tests
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./config:/app/config
+      - ./.streamlit:/app/.streamlit
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Avoid external service dependencies during test runs.
+      - IBM_MAX_ENABLED=false
+      - DEEPFACE_ENABLED=false
+      - FIREBASE_ENABLED=false
+      - DB_TYPE=local
+    command: ["python", "-m", "pytest", "-q"]
 
 networks:
   socialvision-network:

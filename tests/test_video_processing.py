@@ -40,8 +40,9 @@ def test_iterate_frames_from_file_respects_stride(tmp_path):
 
     assert len(sampled) == 2
     assert sampled[0].shape == (32, 32, 3)
-    assert int(sampled[0][0, 0, 0]) == 0
-    assert int(sampled[1][0, 0, 0]) == 100
+    # MP4 codecs are typically lossy; allow small drift across platforms.
+    assert abs(int(sampled[0][0, 0, 0]) - 0) <= 8
+    assert abs(int(sampled[1][0, 0, 0]) - 100) <= 8
 
 
 def test_sample_frames_from_bytes_round_trip(tmp_path):
@@ -60,5 +61,5 @@ def test_sample_frames_from_bytes_round_trip(tmp_path):
     )
 
     assert len(sampled) == 3
-    assert int(sampled[0][0, 0, 0]) == 10
-    assert int(sampled[-1][0, 0, 0]) == 30
+    assert abs(int(sampled[0][0, 0, 0]) - 10) <= 8
+    assert abs(int(sampled[-1][0, 0, 0]) - 30) <= 8

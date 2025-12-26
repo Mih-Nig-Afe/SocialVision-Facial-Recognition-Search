@@ -55,6 +55,7 @@ class Config:
     FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "0.6"))
     DEEPFACE_MODEL = os.getenv("DEEPFACE_MODEL", "Facenet512")
     DEEPFACE_DETECTOR_BACKEND = os.getenv("DEEPFACE_DETECTOR_BACKEND", "opencv")
+    DEEPFACE_ENABLED = os.getenv("DEEPFACE_ENABLED", "True").lower() == "true"
     FACE_SIMILARITY_THRESHOLD = float(os.getenv("FACE_SIMILARITY_THRESHOLD", "0.35"))
     ENABLE_DUAL_EMBEDDINGS = (
         os.getenv("ENABLE_DUAL_EMBEDDINGS", "True").lower() == "true"
@@ -227,6 +228,7 @@ class TestingConfig(Config):
     IMAGE_UPSCALING_ENABLED = False
     IBM_MAX_ENABLED = False
     NCNN_UPSCALING_ENABLED = False
+    DEEPFACE_ENABLED = False
 
 
 def get_config() -> Config:
