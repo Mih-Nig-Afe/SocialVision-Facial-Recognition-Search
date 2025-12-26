@@ -52,6 +52,16 @@ services:
       # DB configuration is sourced from `.env` (env_file) so Docker and local
       # runs behave the same. Recommended: DB_TYPE=firebase for
       # Firestore -> Realtime DB -> local fallback.
+      # Force Realtime DB to avoid Firestore free-tier read quota exhaustion.
+      - DB_TYPE=realtime
+      # Optional: seed Realtime DB once from local JSON when RTDB root is empty.
+      - REALTIME_BOOTSTRAP_FROM_LOCAL=true
+      # Optional: seed Firestore once from local JSON when Firestore is empty.
+      - FIRESTORE_BOOTSTRAP_FROM_LOCAL=true
+      # Reduce Firestore reads from Streamlit reruns.
+      - FIRESTORE_STATS_CACHE_TTL_SECONDS=30
+      # Be tolerant of transient throttling.
+      - FIRESTORE_REST_MAX_RETRIES=8
       # IBM MAX disabled on ARM64/Apple Silicon (enable on x86 systems)
       - IBM_MAX_ENABLED=false
       - IBM_MAX_URL=http://ibm-max:5000

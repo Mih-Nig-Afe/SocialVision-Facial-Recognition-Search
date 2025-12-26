@@ -54,11 +54,14 @@ class FacePipeline:
         self.search_engine = search_engine or SearchEngine(self.database)
         logger.info("Initialized FacePipeline with local database")
 
-    def _prepare_image(self, image: np.ndarray, enhance: bool = True) -> np.ndarray:
-        """Resize/enhance images to maximize embedding quality."""
-        if enhance:
-            return ImageProcessor.prepare_input_image(image)
-        return ImageProcessor.resize_image(image)
+    def _prepare_image(self, image: np.ndarray, enhance: bool = False) -> np.ndarray:
+        """Resize inputs; only upscale when explicitly requested.
+
+        Search/enrichment already has conditional upscale retries in `SearchEngine`,
+        so the pipeline should not eagerly upscale every input.
+        """
+
+        return ImageProcessor.prepare_input_image(image, enhance=enhance)
 
     def _run_enrichment(
         self, image: np.ndarray, source: str, threshold: Optional[float], top_k: int

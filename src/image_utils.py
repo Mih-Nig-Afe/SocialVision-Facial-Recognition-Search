@@ -139,11 +139,22 @@ class ImageProcessor:
         image: np.ndarray,
         max_width: int = 1400,
         max_height: int = 1400,
+        *,
+        enhance: bool = False,
+        minimum_outscale: float = 1.0,
     ) -> np.ndarray:
-        """Resize image before sending to recognition pipeline."""
-        # Always attempt to run the configured upscaler first.
-        # The upscaler itself can decide to no-op when not needed.
-        working = ImageProcessor.enhance_image(image)
+        """Resize image before sending to recognition pipeline.
+
+        Enhancement (super-resolution) is intentionally opt-in because it can be
+        very expensive (e.g., Real-ESRGAN tiling on CPU).
+        """
+
+        working = image
+        if enhance:
+            working = ImageProcessor.enhance_image(
+                working,
+                minimum_outscale=minimum_outscale,
+            )
         return ImageProcessor.resize_image(working, max_width, max_height)
 
     @staticmethod

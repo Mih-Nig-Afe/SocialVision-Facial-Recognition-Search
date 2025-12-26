@@ -40,6 +40,9 @@ class Config:
     FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
     FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL")
     FIREBASE_DB_ROOT = os.getenv("FIREBASE_DB_ROOT", "faces_database")
+    REALTIME_BOOTSTRAP_FROM_LOCAL = (
+        os.getenv("REALTIME_BOOTSTRAP_FROM_LOCAL", "False").lower() == "true"
+    )
     FIRESTORE_COLLECTION_PREFIX = os.getenv(
         "FIRESTORE_COLLECTION_PREFIX", "socialvision_"
     )
@@ -47,6 +50,19 @@ class Config:
     FIRESTORE_LOCATION_ID = os.getenv("FIRESTORE_LOCATION_ID", "us-central")
     FIRESTORE_ENSURE_DATABASE = (
         os.getenv("FIRESTORE_ENSURE_DATABASE", "False").lower() == "true"
+    )
+    # Firestore REST safety: avoid hammering the API from Streamlit reruns.
+    # - BOOTSTRAP_FROM_LOCAL: when Firestore collection is empty, upload faces from LOCAL_DB_PATH once.
+    # - STATS_CACHE_TTL: caches expensive listDocuments-based statistics.
+    FIRESTORE_BOOTSTRAP_FROM_LOCAL = (
+        os.getenv("FIRESTORE_BOOTSTRAP_FROM_LOCAL", "False").lower() == "true"
+    )
+    FIRESTORE_STATS_CACHE_TTL_SECONDS = float(
+        os.getenv("FIRESTORE_STATS_CACHE_TTL_SECONDS", "10")
+    )
+    FIRESTORE_REST_MAX_RETRIES = int(os.getenv("FIRESTORE_REST_MAX_RETRIES", "5"))
+    FIRESTORE_REST_TIMEOUT_SECONDS = float(
+        os.getenv("FIRESTORE_REST_TIMEOUT_SECONDS", "20")
     )
 
     # Face Recognition settings

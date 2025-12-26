@@ -188,6 +188,15 @@ def main():
         # Database info
         st.markdown("---")
         st.subheader("📊 Database Info")
+        backend_label = "Local JSON"
+        try:
+            if getattr(db, "use_realtime", False):
+                backend_label = "Firebase Realtime DB"
+            elif getattr(db, "use_firestore", False):
+                backend_label = "Firestore"
+        except Exception:
+            pass
+        st.caption(f"Backend: {backend_label}")
         stats = db.get_statistics()
 
         col1, col2 = st.columns(2)
@@ -213,6 +222,15 @@ def main():
             horizontal=True,
         )
 
+        search_fast_mode = False
+        if input_mode in ("Image upload", "Video upload"):
+            search_fast_mode = st.checkbox(
+                "⚡ Fast mode (dlib 128)",
+                value=True,
+                key="search_fast_mode",
+                help="Uses 128-d dlib embeddings and skips upscale retries for speed.",
+            )
+
         # Get lazy-loaded processors
         ImageProcessor = get_image_processor()
 
@@ -223,8 +241,11 @@ def main():
                 return None
 
         def _run_image_search(raw_image: np.ndarray, label: str) -> None:
-            processed_image = ImageProcessor.prepare_input_image(raw_image)
-            backend_code = get_upscaler().last_backend
+            # Do not enhance upfront. SearchEngine performs conditional upscale
+            # retries only when faces/embeddings/matches are missing.
+            processed_image = ImageProcessor.prepare_input_image(
+                raw_image, enhance=False
+            )
             framed_preview = ImageProcessor.frame_image_for_display(
                 processed_image, frame_size=DISPLAY_FRAME
             )
@@ -234,7 +255,7 @@ def main():
                 framed_preview,
                 channels="BGR",
                 use_column_width=False,
-                caption=f"Enhanced preview via {_describe_backend(backend_code)}",
+                caption="Preview (no enhancement; conditional upscale on retry)",
             )
 
             st.subheader("Search Results")
@@ -243,6 +264,8 @@ def main():
                     processed_image,
                     threshold=similarity_threshold,
                     top_k=top_k,
+                    skip_upscale=(search_fast_mode or (not enable_auto_improve)),
+                    fast_mode=search_fast_mode,
                 )
             except Exception as search_error:
                 st.error(f"Error during search: {search_error}")
@@ -511,6 +534,7 @@ def main():
                             frames,
                             threshold=similarity_threshold,
                             top_k=top_k,
+                            fast_mode=search_fast_mode,
                         )
 
                         st.metric(
@@ -570,12 +594,20 @@ def main():
             "Source", ["profile_pic", "post", "story", "reel", "video", "camera"]
         )
 
+        add_fast_mode = st.checkbox(
+            "⚡ Fast mode (skip upscaling / fastest)",
+            value=True,
+            key="add_fast_mode",
+            help="Skips super-resolution enhancement and auto-improve passes for speed.",
+        )
+
         # Auto-improvement settings for adding faces
         enable_auto_improve_add = st.checkbox(
             "Enable Auto Face Quality Improvement",
-            value=True,
+            value=not add_fast_mode,
             key="add_auto_improve",
             help="Automatically enhance face quality before adding to database",
+            disabled=add_fast_mode,
         )
         min_quality_score_add = st.slider(
             "Minimum Quality Score",
@@ -661,21 +693,19 @@ def main():
                                 st.error("Failed to load image")
                             else:
                                 processed_image = ImageProcessor.prepare_input_image(
-                                    raw_image
+                                    raw_image,
+                                    enhance=False,
                                 )
-                                backend_code = get_upscaler().last_backend
                                 framed_preview = ImageProcessor.frame_image_for_display(
                                     processed_image, frame_size=DISPLAY_FRAME
                                 )
 
-                                st.subheader("Enhanced Preview")
+                                st.subheader("Input Preview")
                                 st.image(
                                     framed_preview,
                                     channels="BGR",
                                     use_column_width=False,
-                                    caption=(
-                                        f"Auto-enhanced input via {_describe_backend(backend_code)}"
-                                    ),
+                                    caption="No enhancement (conditional upscale only if needed)",
                                 )
 
                                 # Detect faces for preview
@@ -684,7 +714,12 @@ def main():
                                 )
 
                                 if not face_locations:
-                                    st.warning("No faces detected in image")
+                                    if enable_auto_improve_add and not add_fast_mode:
+                                        st.warning(
+                                            "No faces detected in preview (auto-improve may retry with upscaling)."
+                                        )
+                                    else:
+                                        st.warning("No faces detected in image")
                                 else:
                                     st.info(
                                         f"Detected {len(face_locations)} face(s). Processing..."
@@ -722,10 +757,10 @@ def main():
                                             )
 
                                 # Use auto-improver if enabled
-                                if enable_auto_improve_add:
+                                if enable_auto_improve_add and not add_fast_mode:
                                     summary = auto_improver.improve_and_add_face(
                                         username=username,
-                                        image=processed_image,
+                                        image=raw_image,
                                         source=source,
                                         min_quality_score=min_quality_score_add,
                                         auto_improve=True,
@@ -795,9 +830,14 @@ def main():
                             if raw_image is None:
                                 st.error("Failed to decode camera capture")
                             else:
-                                if enable_auto_improve_add:
+                                prepared = ImageProcessor.prepare_input_image(
+                                    raw_image,
+                                    enhance=False,
+                                )
+
+                                if enable_auto_improve_add and not add_fast_mode:
                                     quality_metrics = quality_assessor.assess_quality(
-                                        raw_image
+                                        prepared
                                     )
                                     col1, col2 = st.columns(2)
                                     with col1:
@@ -816,7 +856,7 @@ def main():
                                         else:
                                             st.success("✓ Quality acceptable")
 
-                                if enable_auto_improve_add:
+                                if enable_auto_improve_add and not add_fast_mode:
                                     summary = auto_improver.improve_and_add_face(
                                         username=username,
                                         image=raw_image,
@@ -831,7 +871,7 @@ def main():
                                 else:
                                     summary = face_engine.process_and_add_face(
                                         username=username,
-                                        image=raw_image,
+                                        image=prepared,
                                         source=source,
                                         metadata={
                                             "origin": "streamlit_camera",
@@ -896,7 +936,7 @@ def main():
 
                                 progress_bar = st.progress(0)
                                 for frame_idx, frame in enumerate(frames):
-                                    if enable_auto_improve_add:
+                                    if enable_auto_improve_add and not add_fast_mode:
                                         summary = auto_improver.improve_and_add_face(
                                             username=username,
                                             image=frame,
@@ -910,9 +950,13 @@ def main():
                                             },
                                         )
                                     else:
+                                        prepared = ImageProcessor.prepare_input_image(
+                                            frame,
+                                            enhance=False,
+                                        )
                                         summary = face_engine.process_and_add_face(
                                             username=username,
-                                            image=frame,
+                                            image=prepared,
                                             source=source,
                                             metadata={
                                                 "origin": "streamlit_video",

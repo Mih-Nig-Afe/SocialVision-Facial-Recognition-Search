@@ -15,6 +15,7 @@ logger = setup_logger(__name__)
 
 try:
     import cv2
+
     HAS_CV2 = True
 except ImportError:
     HAS_CV2 = False
@@ -53,7 +54,11 @@ class FaceQualityAssessor:
         try:
             # Convert to grayscale for analysis
             if len(face_image.shape) == 3:
-                gray = cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY) if HAS_CV2 else np.mean(face_image, axis=2).astype(np.uint8)
+                gray = (
+                    cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY)
+                    if HAS_CV2
+                    else np.mean(face_image, axis=2).astype(np.uint8)
+                )
             else:
                 gray = face_image
 
@@ -62,7 +67,9 @@ class FaceQualityAssessor:
                 laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
                 # Normalize blur score (higher variance = sharper image)
                 # Typical sharp images have variance > 100
-                metrics["blur_score"] = max(0.0, min(1.0, 1.0 - (laplacian_var / 500.0)))
+                metrics["blur_score"] = max(
+                    0.0, min(1.0, 1.0 - (laplacian_var / 500.0))
+                )
                 metrics["sharpness"] = min(1.0, laplacian_var / 500.0)
             else:
                 # Fallback: simple gradient-based blur detection
@@ -85,9 +92,9 @@ class FaceQualityAssessor:
 
             # 4. Overall quality score (weighted combination)
             metrics["overall_score"] = (
-                0.4 * (1.0 - metrics["blur_score"]) +  # Sharpness weight
-                0.2 * brightness_score +  # Brightness weight
-                0.4 * metrics["contrast"]  # Contrast weight
+                0.4 * (1.0 - metrics["blur_score"])  # Sharpness weight
+                + 0.2 * brightness_score  # Brightness weight
+                + 0.4 * metrics["contrast"]  # Contrast weight
             )
 
             logger.debug(
@@ -104,7 +111,9 @@ class FaceQualityAssessor:
         return metrics
 
     @staticmethod
-    def improve_face_quality(face_image: np.ndarray) -> Tuple[np.ndarray, Dict[str, float]]:
+    def improve_face_quality(
+        face_image: np.ndarray,
+    ) -> Tuple[np.ndarray, Dict[str, float]]:
         """
         Automatically improve face image quality.
 
@@ -146,21 +155,27 @@ class FaceQualityAssessor:
                 if len(improved.shape) == 3:
                     for i in range(3):
                         improved[:, :, i] = np.clip(
-                            (improved[:, :, i].astype(float) - np.mean(improved[:, :, i])) * 1.2 + 128,
-                            0, 255
+                            (
+                                improved[:, :, i].astype(float)
+                                - np.mean(improved[:, :, i])
+                            )
+                            * 1.2
+                            + 128,
+                            0,
+                            255,
                         ).astype(np.uint8)
                 improvements["contrast_adjusted"] = True
 
             # 2. Denoising
             if HAS_CV2:
-                improved = cv2.fastNlMeansDenoisingColored(improved, None, 10, 10, 7, 21)
+                improved = cv2.fastNlMeansDenoisingColored(
+                    improved, None, 10, 10, 7, 21
+                )
                 improvements["denoised"] = True
 
             # 3. Sharpening (light)
             if HAS_CV2:
-                kernel = np.array([[-1, -1, -1],
-                                 [-1,  9, -1],
-                                 [-1, -1, -1]]) * 0.1
+                kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]]) * 0.1
                 sharpened = cv2.filter2D(improved, -1, kernel)
                 improved = cv2.addWeighted(improved, 0.7, sharpened, 0.3, 0)
                 improvements["sharpened"] = True
@@ -175,7 +190,9 @@ class FaceQualityAssessor:
         return improved, improvements
 
     @staticmethod
-    def is_acceptable_quality(face_image: np.ndarray, min_score: float = 0.3) -> Tuple[bool, Dict[str, float]]:
+    def is_acceptable_quality(
+        face_image: np.ndarray, min_score: float = 0.3
+    ) -> Tuple[bool, Dict[str, float]]:
         """
         Check if face image meets minimum quality requirements.
 
@@ -192,8 +209,7 @@ class FaceQualityAssessor:
 
     @staticmethod
     def filter_by_quality(
-        face_images: List[np.ndarray],
-        min_score: float = 0.3
+        face_images: List[np.ndarray], min_score: float = 0.3
     ) -> Tuple[List[np.ndarray], List[Dict[str, float]]]:
         """
         Filter face images by quality, keeping only acceptable ones.
@@ -209,14 +225,20 @@ class FaceQualityAssessor:
         metrics_list = []
 
         for face_img in face_images:
-            is_acceptable, metrics = FaceQualityAssessor.is_acceptable_quality(face_img, min_score)
+            is_acceptable, metrics = FaceQualityAssessor.is_acceptable_quality(
+                face_img, min_score
+            )
             metrics_list.append(metrics)
             if is_acceptable:
                 filtered.append(face_img)
             else:
-                logger.debug(f"Filtered out low-quality face (score: {metrics['overall_score']:.3f})")
+                logger.debug(
+                    f"Filtered out low-quality face (score: {metrics['overall_score']:.3f})"
+                )
 
-        logger.info(f"Filtered {len(face_images)} faces, kept {len(filtered)} high-quality faces")
+        logger.info(
+            f"Filtered {len(face_images)} faces, kept {len(filtered)} high-quality faces"
+        )
         return filtered, metrics_list
 
 
@@ -271,11 +293,28 @@ class AutoFaceImprover:
         }
 
         try:
-            # Prepare image
-            processed_image = ImageProcessor.prepare_input_image(image)
+            # Prepare image (do NOT upscale by default). Upscaling is expensive and
+            # should only be used as a fallback when detection fails.
+            processed_image = ImageProcessor.prepare_input_image(image, enhance=False)
 
-            # Detect faces
+            # Detect faces (first pass)
             face_locations = self.face_engine.detect_faces(processed_image)
+
+            # Fallback: upscale only when we can't detect faces.
+            if not face_locations and auto_improve:
+                from src.config import get_config
+
+                cfg = get_config()
+                min_outscale = float(
+                    max(1.0, getattr(cfg, "UPSCALE_RETRY_MIN_OUTSCALE", 2.0))
+                )
+                processed_image = ImageProcessor.prepare_input_image(
+                    image,
+                    enhance=True,
+                    minimum_outscale=min_outscale,
+                )
+                face_locations = self.face_engine.detect_faces(processed_image)
+
             summary["faces_detected"] = len(face_locations)
 
             if not face_locations:
@@ -283,7 +322,9 @@ class AutoFaceImprover:
                 return summary
 
             # Extract face chips
-            face_chips = self.face_engine.extract_face_chips(processed_image, face_locations)
+            face_chips = self.face_engine.extract_face_chips(
+                processed_image, face_locations
+            )
 
             improved_count = 0
             for idx, chip in enumerate(face_chips):
@@ -294,10 +335,14 @@ class AutoFaceImprover:
                 # Improve if needed and enabled
                 improved_chip = chip
                 if auto_improve and quality_metrics["overall_score"] < 0.7:
-                    improved_chip, improvements = self.quality_assessor.improve_face_quality(chip)
+                    improved_chip, improvements = (
+                        self.quality_assessor.improve_face_quality(chip)
+                    )
                     if any(improvements.values()):
                         improved_count += 1
-                        logger.info(f"Improved face {idx+1} quality (score: {quality_metrics['overall_score']:.3f} -> improved)")
+                        logger.info(
+                            f"Improved face {idx+1} quality (score: {quality_metrics['overall_score']:.3f} -> improved)"
+                        )
 
                 # Check if quality is acceptable
                 is_acceptable, _ = self.quality_assessor.is_acceptable_quality(
@@ -338,4 +383,3 @@ class AutoFaceImprover:
             summary["errors"].append(str(e))
 
         return summary
-

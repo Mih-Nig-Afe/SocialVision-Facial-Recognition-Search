@@ -223,6 +223,7 @@ class SearchEngine:
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         top_k: int = 50,
         skip_upscale: bool = False,
+        fast_mode: bool = False,
     ) -> Dict:
         """Search for similar faces, optionally retrying with upscaled frame.
 
@@ -234,6 +235,13 @@ class SearchEngine:
         """
 
         try:
+            if fast_mode:
+                return self._execute_fast_search_pass(
+                    image=image,
+                    threshold=threshold,
+                    top_k=top_k,
+                )
+
             base_shape = self._shape_from_image(image)
             primary = self._execute_search_pass(
                 image=image,
@@ -262,11 +270,103 @@ class SearchEngine:
             logger.error(f"Error searching by image: {e}", exc_info=True)
             return {"faces": [], "total_matches": 0}
 
+    def _execute_fast_search_pass(
+        self,
+        image: np.ndarray,
+        threshold: float,
+        top_k: int,
+    ) -> Dict:
+        """Fast search path: dlib (128-d) embeddings + direct DB search.
+
+        Uses OpenCV Haar detection + face_recognition encodings. Designed for
+        responsiveness on CPU, and avoids expensive upscaling retries.
+        """
+
+        try:
+            from src.fast_recognition import fast_detect_faces, fast_extract_embedding
+        except Exception as exc:
+            logger.warning("Fast search unavailable; falling back to detailed: %s", exc)
+            return self._execute_search_pass(
+                image=image,
+                threshold=threshold,
+                top_k=top_k,
+                context="original",
+                report_shape=self._shape_from_image(image),
+            )
+
+        face_locations = fast_detect_faces(image, min_size=60, scale_factor=1.2)
+        source_shape = self._shape_from_image(image)
+
+        results: Dict[str, Any] = {"faces": [], "total_matches": 0}
+        if not face_locations:
+            results["diagnostics"] = {
+                "context": "fast_dlib",
+                "faces_detected": 0,
+                "embeddings_extracted": 0,
+                "source_shape": (
+                    self._shape_dict(source_shape) if source_shape else None
+                ),
+            }
+            results["fallback_used"] = False
+            results["suggest_add_face"] = False
+            return results
+
+        embeddings_extracted = 0
+        for i, location in enumerate(face_locations):
+            emb = fast_extract_embedding(image, location)
+            enrichment_summary = None
+
+            if emb is None:
+                face_results = []
+            else:
+                embeddings_extracted += 1
+                # Force dlib-only search so dimensions always match fast mode.
+                face_results = self.search_by_embedding(
+                    {"dlib": emb},
+                    threshold=threshold,
+                    top_k=top_k,
+                )
+
+                if face_results:
+                    top_match = face_results[0]
+                    username = top_match.get("username")
+                    similarity = top_match.get("similarity_score")
+                    enrichment_summary = self._auto_enrich_identity(
+                        username,
+                        self._serialize_embedding_bundle({"dlib": emb}),
+                        similarity,
+                    )
+
+            results["faces"].append(
+                {
+                    "face_index": i,
+                    "location": location,
+                    "matches": face_results,
+                    "enrichment": enrichment_summary,
+                }
+            )
+            results["total_matches"] += len(face_results)
+
+        results["diagnostics"] = {
+            "context": "fast_dlib",
+            "faces_detected": len(face_locations),
+            "embeddings_extracted": embeddings_extracted,
+        }
+        if source_shape:
+            results["diagnostics"]["source_shape"] = self._shape_dict(source_shape)
+
+        results["fallback_used"] = False
+        results["suggest_add_face"] = (
+            embeddings_extracted > 0 and results.get("total_matches", 0) == 0
+        )
+        return results
+
     def search_video_frames(
         self,
         frames: Iterable[np.ndarray],
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         top_k: int = 50,
+        fast_mode: bool = False,
     ) -> Dict[str, Any]:
         """Aggregate search over a sequence of video frames."""
 
@@ -286,7 +386,13 @@ class SearchEngine:
             if frame is None:
                 continue
 
-            frame_result = self.search_by_image(frame, threshold=threshold, top_k=top_k)
+            frame_result = self.search_by_image(
+                frame,
+                threshold=threshold,
+                top_k=top_k,
+                skip_upscale=fast_mode,
+                fast_mode=fast_mode,
+            )
             faces = frame_result.get("faces", [])
             matches = frame_result.get("total_matches", 0)
             aggregate["frames_processed"] += 1
