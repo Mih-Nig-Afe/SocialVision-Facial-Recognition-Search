@@ -399,7 +399,50 @@ class SearchEngine:
                 if face_results:
                     top_match = face_results[0]
                     username_for_face = top_match.get("username")
-                    serialized = self._serialize_embedding_bundle({"dlib": emb})
+
+                    # Enrich DB with *both* embedding types when possible.
+                    # This keeps future searches mode-agnostic (fast/detailed/live).
+                    enrich_bundle: Dict[str, Any] = {"dlib": emb}
+                    try:
+                        # Only compute DeepFace after we have a match (keeps fast path fast).
+                        from src.fast_recognition import (
+                            _extract_deepface_embedding_only,
+                        )
+
+                        deepface_bundle = _extract_deepface_embedding_only(
+                            image, location
+                        )
+                        if (
+                            isinstance(deepface_bundle, dict)
+                            and deepface_bundle.get("deepface") is not None
+                        ):
+                            enrich_bundle.update(deepface_bundle)
+                    except Exception:
+                        deepface_bundle = None
+
+                    serialized = self._serialize_embedding_bundle(enrich_bundle)
+
+                    # If DeepFace extraction wasn't available, avoid creating new dlib-only
+                    # records when the user already has dlib vectors (prevents mixed-dim primaries).
+                    if username_for_face and serialized:
+                        if "deepface" not in serialized:
+                            try:
+                                existing_faces = self.database.get_faces_by_username(
+                                    username_for_face
+                                )
+                                needs_dlib = any(
+                                    (
+                                        isinstance(f.get("embeddings"), dict)
+                                        and "dlib" not in f.get("embeddings", {})
+                                    )
+                                    for f in existing_faces
+                                )
+                                if not needs_dlib:
+                                    serialized = None
+                            except Exception:
+                                # If we can't determine, be conservative and skip.
+                                serialized = None
+
                     if username_for_face and serialized:
                         pending_enrich.setdefault(username_for_face, []).append(
                             serialized

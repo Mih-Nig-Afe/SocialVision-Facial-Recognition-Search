@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.6
 # Simplified single-stage build for SocialVision Facial Recognition Search Engine
 FROM python:3.11-slim
 
@@ -51,31 +50,26 @@ WORKDIR /app
 COPY requirements.txt .
 # Install dependencies in optimized stages to handle network timeouts
 # Stage 1: Upgrade pip and install core build tools
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=600 --retries=5 --upgrade pip setuptools wheel
+RUN pip install --default-timeout=600 --retries=5 --upgrade pip setuptools wheel
 
 # Stage 2: Install large packages separately to avoid JSON decode errors
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=1800 --retries=10 --no-cache-dir \
+RUN pip install --default-timeout=1800 --retries=10 --no-cache-dir \
     numpy==1.26.4 scipy==1.14.1 || \
     pip install --default-timeout=1800 --retries=10 \
     numpy==1.26.4 scipy==1.14.1
 
 # Stage 3: Install PyTorch separately (large package, prone to timeouts)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=1800 --retries=10 --no-cache-dir \
+RUN pip install --default-timeout=1800 --retries=10 --no-cache-dir \
     torch==2.4.1 torchvision==0.19.1 || \
     pip install --default-timeout=1800 --retries=10 \
     torch==2.4.1 torchvision==0.19.1
 
 # Stage 4: Install TensorFlow and Keras (quote version constraints to avoid shell redirection)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=1800 --retries=10 \
+RUN pip install --default-timeout=1800 --retries=10 \
     tensorflow==2.16.1 "keras>=3.0.0,<4.0.0" tf-keras==2.16.0
 
 # Stage 5: Install remaining requirements
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --default-timeout=1800 --retries=10 -r requirements.txt || \
+RUN pip install --default-timeout=1800 --retries=10 -r requirements.txt || \
     (pip install --default-timeout=1800 --retries=10 --no-cache-dir -r requirements.txt)
 
 # Stage 6: Verify critical imports

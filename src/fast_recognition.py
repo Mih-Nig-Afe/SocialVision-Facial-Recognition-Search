@@ -7,6 +7,7 @@ import numpy as np
 import cv2
 import time
 import os
+import math
 import threading
 import weakref
 from typing import List, Tuple, Optional, Dict, Any
@@ -68,6 +69,9 @@ def _serialize_embedding_bundle_for_db(
         return None
     serialized: Dict[str, List[float]] = {}
     for key, value in bundle.items():
+        # Never serialize internal/auxiliary fields (e.g. face crops).
+        if isinstance(key, str) and key.startswith("_"):
+            continue
         if value is None:
             continue
         if hasattr(value, "tolist"):
@@ -76,8 +80,34 @@ def _serialize_embedding_bundle_for_db(
             vec = list(value)
         else:
             continue
-        if vec:
-            serialized[key] = vec
+
+        # Only allow 1-D numeric vectors (embeddings). Prevents accidentally
+        # serializing images (H x W x C) or other nested payloads.
+        if not vec:
+            continue
+        if isinstance(vec[0], (list, tuple, dict)):
+            continue
+
+        cleaned: List[float] = []
+        ok = True
+        for item in vec:
+            try:
+                as_float = float(item)
+            except Exception:
+                ok = False
+                break
+            if not math.isfinite(as_float):
+                ok = False
+                break
+            cleaned.append(as_float)
+        if not ok or not cleaned:
+            continue
+
+        # Safety: embeddings should be small (128/512/etc). Avoid huge payloads.
+        if len(cleaned) > 4096:
+            continue
+
+        serialized[str(key)] = cleaned
     return serialized or None
 
 
@@ -297,7 +327,8 @@ def _flush_live_auto_enrich(
         if not items:
             continue
 
-        bundles_to_append: List[Dict[str, List[float]]] = []
+        full_bundles: List[Dict[str, List[float]]] = []
+        partial_bundles: List[Dict[str, List[float]]] = []
         trigger_max = 0.0
         any_fast = False
 
@@ -314,7 +345,7 @@ def _flush_live_auto_enrich(
             any_fast = any_fast or bool(item.get("fast_mode"))
 
             if default_key in bundle:
-                bundles_to_append.append(bundle)
+                full_bundles.append(bundle)
                 continue
 
             # Prefer attaching the user's current profile vector (cheap).
@@ -331,7 +362,7 @@ def _flush_live_auto_enrich(
             if profile_vec is not None and getattr(profile_vec, "size", 0) > 0:
                 adjusted = dict(bundle)
                 adjusted[default_key] = profile_vec.astype(np.float32).tolist()
-                bundles_to_append.append(adjusted)
+                full_bundles.append(adjusted)
                 continue
 
             # If no profile exists yet, try generating a deepface embedding from the crop once.
@@ -346,7 +377,7 @@ def _flush_live_auto_enrich(
                 if serialized_deepface and default_key in serialized_deepface:
                     adjusted = dict(bundle)
                     adjusted.update(serialized_deepface)
-                    bundles_to_append.append(adjusted)
+                    full_bundles.append(adjusted)
                     continue
 
             # Last resort: attach the user's current profile vector.
@@ -361,29 +392,59 @@ def _flush_live_auto_enrich(
                         profile_vec = None
 
             if profile_vec is None or profile_vec.size == 0:
+                # We still have useful secondary embeddings (e.g. dlib). Patch them
+                # into an existing record rather than dropping the enrichment.
+                partial_bundles.append(bundle)
                 continue
             adjusted = dict(bundle)
             adjusted[default_key] = profile_vec.astype(np.float32).tolist()
-            bundles_to_append.append(adjusted)
+            full_bundles.append(adjusted)
 
-        if not bundles_to_append:
+        if not full_bundles and not partial_bundles:
             continue
 
         metadata = {
             "origin": "live_camera",
             "fast_mode": bool(any_fast),
             "trigger_similarity": trigger_max,
-            "batch_size": len(bundles_to_append),
+            "batch_size": int(len(full_bundles) + len(partial_bundles)),
         }
-        try:
-            append_fn(
-                username,
-                bundles_to_append,
-                source="live_auto_enrich",
-                metadata=metadata,
-            )
-        except Exception as exc:
-            logger.debug("Live auto-enrich flush failed for %s: %s", username, exc)
+
+        if full_bundles:
+            try:
+                append_fn(
+                    username,
+                    full_bundles,
+                    source="live_auto_enrich",
+                    metadata=metadata,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Live auto-enrich flush (full) failed for %s: %s", username, exc
+                )
+
+        if partial_bundles:
+            # Patch-only: do not create new face records when we only have secondary
+            # embeddings (e.g., dlib) and can't compute/attach deepface yet.
+            patch_meta = dict(metadata)
+            patch_meta["patch_only"] = True
+            try:
+                append_fn(
+                    username,
+                    partial_bundles,
+                    source="live_auto_enrich",
+                    metadata=patch_meta,
+                    allow_create=False,
+                )
+            except TypeError:
+                # Back-compat: DB layer may not support allow_create in older versions.
+                pass
+            except Exception as exc:
+                logger.debug(
+                    "Live auto-enrich flush (partial) failed for %s: %s",
+                    username,
+                    exc,
+                )
 
 
 def get_face_cascade():

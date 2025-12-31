@@ -3,6 +3,7 @@
 import json
 import shutil
 import numpy as np
+import math
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Iterable, Tuple
 from datetime import datetime
@@ -82,6 +83,47 @@ def _get_bearer_token_from_credentials(creds) -> str:
     if not token:
         raise RuntimeError("Unable to obtain access token from credentials")
     return token
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert a Python object into a strict-JSON-serializable structure.
+
+    Firebase Realtime DB rejects invalid JSON such as NaN/Infinity. This helper
+    also converts numpy scalars/arrays into built-in Python types.
+    """
+
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+
+    # numpy scalars
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        as_float = float(value)
+        return as_float if math.isfinite(as_float) else None
+
+    # numpy arrays
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+
+    if isinstance(value, dict):
+        # Keys must be strings for JSON
+        return {str(k): _json_safe(v) for k, v in value.items()}
+
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except Exception:
+            return value.decode("utf-8", errors="replace")
+
+    # Last resort: stringify unknown objects (e.g., Path, datetime-like)
+    return str(value)
 
 
 class RestDocumentSnapshot:
@@ -822,9 +864,17 @@ class FaceDatabase:
                 if isinstance(remote_payload, dict)
                 else None
             )
-            remote_faces_list: List[Dict[str, Any]] = []
+            remote_ids: set[Any] = set()
             if isinstance(remote_faces, list):
-                remote_faces_list = [f for f in remote_faces if isinstance(f, dict)]
+                for face in remote_faces:
+                    if isinstance(face, dict) and isinstance(
+                        face.get("id"), (int, str)
+                    ):
+                        remote_ids.add(face.get("id"))
+            elif isinstance(remote_faces, dict):
+                for key in remote_faces.keys():
+                    # keys are strings in RTDB JSON
+                    remote_ids.add(key)
 
             local_path = self.db_path
             if not local_path.exists():
@@ -847,11 +897,6 @@ class FaceDatabase:
                 return
 
             local_faces_list = [f for f in local_faces if isinstance(f, dict)]
-            remote_ids = {
-                f.get("id")
-                for f in remote_faces_list
-                if isinstance(f.get("id"), (int, str))
-            }
             missing = [
                 f
                 for f in local_faces_list
@@ -867,50 +912,244 @@ class FaceDatabase:
                 self._realtime_db_root,
             )
 
-            merged: Dict[str, Any] = {}
-            if isinstance(local_payload, dict):
-                merged.update(local_payload)
-            if isinstance(remote_payload, dict):
-                merged.update(remote_payload)
+            # Incremental bootstrap to avoid RTDB per-request size limits.
+            # Ensure root metadata exists.
+            root_patch = {
+                "version": (
+                    str(remote_payload.get("version") or "1.0")
+                    if isinstance(remote_payload, dict)
+                    else "1.0"
+                ),
+                "created_at": (
+                    remote_payload.get("created_at")
+                    if isinstance(remote_payload, dict)
+                    else None
+                )
+                or datetime.now().isoformat(),
+            }
+            requests.patch(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=_json_safe(root_patch),
+                timeout=30,
+            ).raise_for_status()
 
-            merged["faces"] = list(remote_faces_list) + missing
+            for face in missing:
+                face_id = str(face.get("id"))
+                face_url = f"{self._realtime_db_url}/{self._realtime_db_root}/faces/{face_id}.json"
+                requests.put(
+                    face_url,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=_json_safe(face),
+                    timeout=30,
+                ).raise_for_status()
 
             local_meta = (
                 local_payload.get("metadata")
                 if isinstance(local_payload, dict)
                 else None
             )
-            remote_meta = (
-                remote_payload.get("metadata")
-                if isinstance(remote_payload, dict)
-                else None
-            )
-            merged_meta: Dict[str, Any] = {}
-            if isinstance(local_meta, dict):
-                merged_meta.update(local_meta)
-            if isinstance(remote_meta, dict):
-                merged_meta.update(remote_meta)
-            merged["metadata"] = merged_meta
-
-            if not merged.get("created_at"):
-                merged["created_at"] = datetime.now().isoformat()
-            if not merged.get("version"):
-                merged["version"] = "1.0"
-
-            put_resp = requests.put(
-                url,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json=merged,
-            )
-            put_resp.raise_for_status()
+            if isinstance(local_meta, dict) and local_meta:
+                for uname, meta in local_meta.items():
+                    if uname is None:
+                        continue
+                    meta_url = f"{self._realtime_db_url}/{self._realtime_db_root}/metadata/{str(uname)}.json"
+                    requests.patch(
+                        meta_url,
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Content-Type": "application/json",
+                        },
+                        json=_json_safe(meta),
+                        timeout=30,
+                    ).raise_for_status()
         except Exception as exc:
             logger.warning(
                 "Failed to bootstrap Realtime DB from local DB: %s",
                 exc,
             )
+
+    def _realtime_write_face_record(self, face_record: Dict[str, Any]) -> bool:
+        if not self._realtime_db_url:
+            return False
+        try:
+            token = _get_bearer_token_from_credentials(self._google_credentials)
+            face_id = str(face_record.get("id"))
+            if not face_id:
+                raise ValueError("Face record missing id")
+            url = (
+                f"{self._realtime_db_url}/{self._realtime_db_root}/faces/{face_id}.json"
+            )
+            resp = requests.put(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=_json_safe(face_record),
+                timeout=30,
+            )
+            if not resp.ok:
+                logger.error(
+                    "Realtime DB face write failed (%s): %s",
+                    resp.status_code,
+                    (resp.text or "").strip()[:2000],
+                )
+                return False
+            return True
+        except Exception as exc:
+            logger.error("Realtime DB face write error: %s", exc, exc_info=True)
+            return False
+
+    def _realtime_patch_metadata(self, username: str, payload: Dict[str, Any]) -> bool:
+        if not self._realtime_db_url:
+            return False
+        try:
+            token = _get_bearer_token_from_credentials(self._google_credentials)
+            url = f"{self._realtime_db_url}/{self._realtime_db_root}/metadata/{username}.json"
+            resp = requests.patch(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=_json_safe(payload),
+                timeout=30,
+            )
+            if not resp.ok:
+                logger.error(
+                    "Realtime DB metadata patch failed (%s): %s",
+                    resp.status_code,
+                    (resp.text or "").strip()[:2000],
+                )
+                return False
+            return True
+        except Exception as exc:
+            logger.error("Realtime DB metadata patch error: %s", exc, exc_info=True)
+            return False
+
+    def _realtime_patch_face(self, face_id: str, payload: Dict[str, Any]) -> bool:
+        """PATCH a subset of fields for an existing face record."""
+        if not self._realtime_db_url:
+            return False
+        try:
+            token = _get_bearer_token_from_credentials(self._google_credentials)
+            url = (
+                f"{self._realtime_db_url}/{self._realtime_db_root}/faces/{face_id}.json"
+            )
+            resp = requests.patch(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=_json_safe(payload),
+                timeout=30,
+            )
+            if not resp.ok:
+                logger.error(
+                    "Realtime DB face patch failed (%s): %s",
+                    resp.status_code,
+                    (resp.text or "").strip()[:2000],
+                )
+                return False
+            return True
+        except Exception as exc:
+            logger.error("Realtime DB face patch error: %s", exc, exc_info=True)
+            return False
+
+    def _realtime_patch_face_embeddings(
+        self, face_id: str, embeddings_delta: Dict[str, Any]
+    ) -> bool:
+        """PATCH only the embedding keys that are new/missing for a face record."""
+        if not self._realtime_db_url:
+            return False
+        if not embeddings_delta:
+            return True
+        try:
+            token = _get_bearer_token_from_credentials(self._google_credentials)
+            url = f"{self._realtime_db_url}/{self._realtime_db_root}/faces/{face_id}/embeddings.json"
+            resp = requests.patch(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=_json_safe(embeddings_delta),
+                timeout=30,
+            )
+            if not resp.ok:
+                logger.error(
+                    "Realtime DB face embeddings patch failed (%s): %s",
+                    resp.status_code,
+                    (resp.text or "").strip()[:2000],
+                )
+                return False
+            return True
+        except Exception as exc:
+            logger.error(
+                "Realtime DB face embeddings patch error: %s", exc, exc_info=True
+            )
+            return False
+
+    def _next_face_id(self) -> str:
+        """Return a new numeric face id that won't collide with existing records."""
+        max_id = -1
+        for face in self.data.get("faces", []) or []:
+            if not isinstance(face, dict):
+                continue
+            fid = face.get("id")
+            try:
+                i = int(str(fid))
+            except Exception:
+                continue
+            if i > max_id:
+                max_id = i
+        return str(max_id + 1)
+
+    def _get_face_record_by_id(self, face_id: str) -> Optional[Dict[str, Any]]:
+        for face in self.data.get("faces", []) or []:
+            if isinstance(face, dict) and str(face.get("id")) == str(face_id):
+                return face
+        return None
+
+    def _find_face_record_to_enrich(
+        self, username: str, bundle_keys: Iterable[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Pick the most recent face record for a user that's missing any bundle keys."""
+        if not username:
+            return None
+        faces = self.get_faces_by_username(username)
+        if not faces:
+            return None
+
+        keys = {str(k) for k in bundle_keys if k is not None}
+        if not keys:
+            return None
+
+        def _sort_key(face: Dict[str, Any]):
+            fid = face.get("id")
+            try:
+                return int(str(fid))
+            except Exception:
+                return -1
+
+        for face in sorted(
+            (f for f in faces if isinstance(f, dict)), key=_sort_key, reverse=True
+        ):
+            existing = face.get("embeddings")
+            if not isinstance(existing, dict):
+                return face
+            missing = any(k not in existing for k in keys)
+            if missing:
+                return face
+        return None
 
     def _mark_firestore_read_quota_exhausted(self, exc: Exception) -> bool:
         """Detect 429 quota exhaustion and mark Firestore reads as unavailable."""
@@ -1334,6 +1573,32 @@ class FaceDatabase:
             doc_ref = self._profiles_collection.document(username)
             if not self._write_document_with_retry(doc_ref, payload, merge=True):
                 logger.error("Failed to update profile metadata for %s", username)
+        elif self.use_realtime:
+            # Realtime DB writes should stay small. By default we avoid persisting
+            # the full profile embedding vector (can grow write size quickly).
+            # The in-memory cache is still updated so the running app can use it.
+            payload = {
+                "last_updated": datetime.now().isoformat(),
+                "embeddings_count": count,
+            }
+
+            store_profile = bool(
+                getattr(config, "REALTIME_STORE_PROFILE_EMBEDDING", False)
+            )
+            if store_profile and profile_vector is not None:
+                payload["profile_embedding"] = profile_vector.tolist()
+
+            # Always keep in-memory copy for fast reads
+            self.data.setdefault("metadata", {})
+            mem_meta = self.data["metadata"].setdefault(username, {})
+            mem_meta.update(payload)
+            if (not store_profile) and profile_vector is not None:
+                mem_meta["profile_embedding"] = profile_vector.tolist()
+
+            if not self._realtime_patch_metadata(username, payload):
+                logger.error(
+                    "Failed to update Realtime DB profile metadata for %s", username
+                )
         else:
             self.data.setdefault("metadata", {})
             meta = self.data["metadata"].setdefault(username, {})
@@ -1448,6 +1713,24 @@ class FaceDatabase:
             resp.raise_for_status()
             payload = resp.json() or {}
             if isinstance(payload, dict) and payload.get("faces") is not None:
+                # Support both list-based and dict-based face storage.
+                faces = payload.get("faces")
+                if isinstance(faces, dict):
+                    faces_list: List[Dict[str, Any]] = []
+                    for key, record in faces.items():
+                        if isinstance(record, dict):
+                            record.setdefault("id", key)
+                            faces_list.append(record)
+
+                    def _sort_key(item: Dict[str, Any]):
+                        face_id = item.get("id")
+                        try:
+                            return int(face_id)
+                        except Exception:
+                            return str(face_id)
+
+                    faces_list.sort(key=_sort_key)
+                    payload["faces"] = faces_list
                 return payload
         except Exception as exc:
             logger.error("Error loading Firebase Realtime DB: %s", exc, exc_info=True)
@@ -1463,14 +1746,52 @@ class FaceDatabase:
         try:
             token = _get_bearer_token_from_credentials(self._google_credentials)
             url = f"{self._realtime_db_url}/{self._realtime_db_root}.json"
+            payload = _json_safe(self.data)
+
+            # Attempt 1: Authorization header (works in many environments)
             resp = requests.put(
                 url,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
                 },
-                json=self.data,
+                json=payload,
+                timeout=30,
             )
+
+            # Some RTDB deployments reject Authorization header; try access_token param
+            # only on auth errors to avoid leaking tokens in error URLs.
+            if resp.status_code in (401, 403):
+                resp_alt = requests.put(
+                    url,
+                    params={"access_token": token},
+                    headers={"Content-Type": "application/json"},
+                    json=payload,
+                    timeout=30,
+                )
+                if resp_alt.ok:
+                    logger.info(
+                        "Database saved successfully to Firebase Realtime DB root %s",
+                        url,
+                    )
+                    return True
+
+                # Prefer alternate response details if both failed.
+                # Do not raise_for_status() here because it includes the tokenized URL.
+                logger.error(
+                    "Realtime DB save failed (%s): %s",
+                    resp_alt.status_code,
+                    (resp_alt.text or "").strip()[:2000],
+                )
+                return False
+
+            if not resp.ok:
+                logger.error(
+                    "Realtime DB save failed (%s): %s",
+                    resp.status_code,
+                    (resp.text or "").strip()[:2000],
+                )
+
             resp.raise_for_status()
             logger.info(
                 "Database saved successfully to Firebase Realtime DB root %s", url
@@ -1536,6 +1857,85 @@ class FaceDatabase:
             }
 
             if self.use_firestore:
+                # If this add_face introduces NEW embedding keys for an existing user,
+                # enrich an existing face record instead of creating a new one.
+                try:
+                    if self._faces_collection is not None and username:
+                        query = self._faces_collection.where("username", "==", username)
+                        existing_docs = list(query.stream())
+                        if existing_docs:
+                            union_keys = set()
+                            for doc in existing_docs:
+                                payload = doc.to_dict() or {}
+                                emb_map = payload.get("embeddings")
+                                if isinstance(emb_map, dict):
+                                    union_keys.update(str(k) for k in emb_map.keys())
+
+                            bundle_keys = set(str(k) for k in bundle.keys())
+                            new_keys = bundle_keys - union_keys
+                            if new_keys:
+                                target_doc = None
+                                target_payload = None
+                                for doc in existing_docs:
+                                    payload = doc.to_dict() or {}
+                                    emb_map = payload.get("embeddings")
+                                    if not isinstance(emb_map, dict):
+                                        target_doc = doc
+                                        target_payload = payload
+                                        break
+                                    missing_any = any(
+                                        k not in emb_map for k in new_keys
+                                    )
+                                    if missing_any:
+                                        target_doc = doc
+                                        target_payload = payload
+                                        break
+
+                                if target_doc is not None:
+                                    existing_map = (
+                                        (target_payload or {}).get("embeddings")
+                                        if isinstance(
+                                            (target_payload or {}).get("embeddings"),
+                                            dict,
+                                        )
+                                        else {}
+                                    )
+                                    delta = {
+                                        k: v
+                                        for k, v in bundle.items()
+                                        if str(k) in new_keys
+                                    }
+                                    merged = dict(existing_map)
+                                    merged.update(delta)
+                                    update = {"embeddings": merged}
+                                    if DEFAULT_EMBEDDING_SOURCE in delta:
+                                        update["embedding"] = delta[
+                                            DEFAULT_EMBEDDING_SOURCE
+                                        ]
+
+                                    doc_ref = self._faces_collection.document(
+                                        str(target_doc.id)
+                                    )
+                                    if not self._write_document_with_retry(
+                                        doc_ref, update, merge=True
+                                    ):
+                                        return False
+
+                                    self.invalidate_cache()
+                                    self.get_profile_embedding_for_username(
+                                        username, force_refresh=True
+                                    )
+                                    logger.info(
+                                        "Firestore: enriched existing face %s for %s with %s new embedding key(s)",
+                                        target_doc.id,
+                                        username,
+                                        len(delta),
+                                    )
+                                    return True
+                except Exception:
+                    # If enrichment probing fails, fall back to normal create path.
+                    pass
+
                 doc_ref = self._faces_collection.document()
                 face_record["id"] = doc_ref.id
                 if not self._write_document_with_retry(doc_ref, face_record):
@@ -1550,7 +1950,146 @@ class FaceDatabase:
                 )
                 return True
 
+            if self.use_realtime:
+                # When enabled, only upload new embedding dimensions for existing records
+                # (e.g., add dlib vectors later without re-uploading deepface again).
+                delta_enabled = bool(getattr(config, "REALTIME_DELTA_EMBEDDINGS", True))
+                if delta_enabled:
+                    target = self._find_face_record_to_enrich(username, bundle.keys())
+                    if target is not None:
+                        target_id = str(target.get("id"))
+                        existing = (
+                            target.get("embeddings")
+                            if isinstance(target.get("embeddings"), dict)
+                            else {}
+                        )
+                        delta = {k: v for k, v in bundle.items() if k not in existing}
+
+                        if delta:
+                            ok = self._realtime_patch_face_embeddings(target_id, delta)
+                            # Ensure primary embedding is present/consistent.
+                            if DEFAULT_EMBEDDING_SOURCE in delta:
+                                ok = ok and self._realtime_patch_face(
+                                    target_id,
+                                    {"embedding": delta[DEFAULT_EMBEDDING_SOURCE]},
+                                )
+                            if ok:
+                                target.setdefault("embeddings", {})
+                                target["embeddings"].update(delta)
+                                if DEFAULT_EMBEDDING_SOURCE in delta:
+                                    target["embedding"] = delta[
+                                        DEFAULT_EMBEDDING_SOURCE
+                                    ]
+                                self.invalidate_cache()
+                                self.get_profile_embedding_for_username(
+                                    username, force_refresh=True
+                                )
+                                logger.info(
+                                    "Realtime DB: enriched face %s for %s with %s new embedding key(s)",
+                                    target_id,
+                                    username,
+                                    len(delta),
+                                )
+                                return True
+
+                            # If we detected new keys but failed to patch them, do not
+                            # create a new record (caller can retry).
+                            logger.error(
+                                "Realtime DB: failed to patch %s new embedding key(s) into face %s for %s",
+                                len(delta),
+                                target_id,
+                                username,
+                            )
+                            return False
+
+                        # Nothing new to upload; fall through to create a new record
+
+                # Local-style delta behavior: if the user exists and this bundle introduces
+                # new embedding keys, prefer enriching an existing face record.
+                # Realtime delta above already handles this when enabled.
+
+                face_record["id"] = self._next_face_id()
+                self.data["faces"].append(face_record)
+                if self._realtime_write_face_record(face_record):
+                    self.invalidate_cache()
+                    self.get_profile_embedding_for_username(
+                        username, force_refresh=True
+                    )
+                    logger.info(
+                        "Successfully added face for user %s from %s (embedding_dim=%s)",
+                        username,
+                        source,
+                        embedding_dim,
+                    )
+                    return True
+
+                logger.error("Failed to write face record to Realtime DB")
+                self.data["faces"].pop()
+                return False
+
             face_record["id"] = len(self.data["faces"])
+
+            # Local JSON: if this add_face introduces NEW embedding keys for an existing
+            # user, enrich an existing record instead of creating a new one.
+            try:
+                if username:
+                    existing_faces = self.get_faces_by_username(username)
+                    if existing_faces:
+                        union_keys = set()
+                        for face in existing_faces:
+                            emb_map = (
+                                face.get("embeddings")
+                                if isinstance(face, dict)
+                                else None
+                            )
+                            if isinstance(emb_map, dict):
+                                union_keys.update(str(k) for k in emb_map.keys())
+
+                        bundle_keys = set(str(k) for k in bundle.keys())
+                        new_keys = bundle_keys - union_keys
+                        if new_keys:
+                            target = self._find_face_record_to_enrich(
+                                username, bundle.keys()
+                            )
+                            if target is not None:
+                                existing_map = (
+                                    target.get("embeddings")
+                                    if isinstance(target.get("embeddings"), dict)
+                                    else {}
+                                )
+                                delta = {
+                                    k: v
+                                    for k, v in bundle.items()
+                                    if str(k) in new_keys
+                                }
+                                if delta:
+                                    target.setdefault("embeddings", {})
+                                    if not isinstance(target.get("embeddings"), dict):
+                                        target["embeddings"] = {}
+                                    target["embeddings"].update(delta)
+                                    if DEFAULT_EMBEDDING_SOURCE in delta:
+                                        target["embedding"] = delta[
+                                            DEFAULT_EMBEDDING_SOURCE
+                                        ]
+                                    if self._save_database():
+                                        self.invalidate_cache()
+                                        self.get_profile_embedding_for_username(
+                                            username, force_refresh=True
+                                        )
+                                        logger.info(
+                                            "Local DB: enriched existing face for %s with %s new embedding key(s)",
+                                            username,
+                                            len(delta),
+                                        )
+                                        return True
+                                    logger.error(
+                                        "Failed to save database after enriching face"
+                                    )
+                                    return False
+            except Exception:
+                # If enrichment probing fails, fall back to normal create path.
+                pass
+
             self.data["faces"].append(face_record)
 
             if self._save_database():
@@ -1695,6 +2234,7 @@ class FaceDatabase:
         source: str,
         image_url: Optional[str] = None,
         metadata: Optional[Dict] = None,
+        allow_create: bool = True,
     ) -> Dict[str, Any]:
         """
         Append new embeddings to a username's profile by creating new face records
@@ -1702,9 +2242,95 @@ class FaceDatabase:
 
         Returns a summary dict with counts and the updated profile similarity dimension.
         """
-        summary = {"added": 0, "username": username, "updated_profile_dim": None}
+        summary = {
+            "added": 0,
+            "patched": 0,
+            "patched_keys": 0,
+            "username": username,
+            "updated_profile_dim": None,
+        }
         try:
             if not embeddings:
+                return summary
+
+            # Patch-only mode: only add missing embedding keys to an existing record.
+            # This avoids creating new face records for repeated recognitions.
+            if not allow_create:
+                patched_records = 0
+                patched_keys = 0
+
+                for emb in embeddings:
+                    try:
+                        if isinstance(emb, dict):
+                            bundle = self._normalize_embedding_bundle(emb)
+                        else:
+                            if not isinstance(emb, list):
+                                emb = list(emb)
+                            norm_vec = self._normalize_embedding_vector(emb)
+                            bundle = {DEFAULT_EMBEDDING_SOURCE: norm_vec.tolist()}
+                    except Exception:
+                        continue
+
+                    if not bundle:
+                        continue
+
+                    target = self._find_face_record_to_enrich(username, bundle.keys())
+                    if target is None:
+                        continue
+
+                    target_id = str(target.get("id"))
+                    existing = (
+                        target.get("embeddings")
+                        if isinstance(target.get("embeddings"), dict)
+                        else {}
+                    )
+                    delta = {k: v for k, v in bundle.items() if k not in existing}
+                    if not delta:
+                        continue
+
+                    ok = True
+                    if self.use_realtime:
+                        ok = self._realtime_patch_face_embeddings(target_id, delta)
+                        if DEFAULT_EMBEDDING_SOURCE in delta:
+                            ok = ok and self._realtime_patch_face(
+                                target_id,
+                                {"embedding": delta[DEFAULT_EMBEDDING_SOURCE]},
+                            )
+                    elif self.use_firestore:
+                        # Best-effort: current patch-only path is optimized for realtime/local.
+                        ok = False
+                    else:
+                        target.setdefault("embeddings", {})
+                        if not isinstance(target.get("embeddings"), dict):
+                            target["embeddings"] = {}
+                        target["embeddings"].update(delta)
+                        if DEFAULT_EMBEDDING_SOURCE in delta:
+                            target["embedding"] = delta[DEFAULT_EMBEDDING_SOURCE]
+
+                    if not ok:
+                        continue
+
+                    # Keep in-memory cache consistent for realtime as well.
+                    target.setdefault("embeddings", {})
+                    if not isinstance(target.get("embeddings"), dict):
+                        target["embeddings"] = {}
+                    target["embeddings"].update(delta)
+                    if DEFAULT_EMBEDDING_SOURCE in delta:
+                        target["embedding"] = delta[DEFAULT_EMBEDDING_SOURCE]
+
+                    patched_records += 1
+                    patched_keys += len(delta)
+
+                if (
+                    (not self.use_realtime)
+                    and (not self.use_firestore)
+                    and patched_records
+                ):
+                    # Persist local JSON updates.
+                    self._save_database()
+
+                summary["patched"] = patched_records
+                summary["patched_keys"] = patched_keys
                 return summary
 
             added = 0
@@ -1752,6 +2378,60 @@ class FaceDatabase:
                     record["id"] = doc_ref.id
                     batch.set(doc_ref, record)
                 batch.commit()
+            elif self.use_realtime:
+                delta_enabled = bool(getattr(config, "REALTIME_DELTA_EMBEDDINGS", True))
+                for record in face_records:
+                    bundle = (
+                        record.get("embeddings")
+                        if isinstance(record.get("embeddings"), dict)
+                        else {}
+                    )
+                    if delta_enabled and bundle:
+                        target = self._find_face_record_to_enrich(
+                            username, bundle.keys()
+                        )
+                        if target is not None:
+                            target_id = str(target.get("id"))
+                            existing = (
+                                target.get("embeddings")
+                                if isinstance(target.get("embeddings"), dict)
+                                else {}
+                            )
+                            delta = {
+                                k: v for k, v in bundle.items() if k not in existing
+                            }
+
+                            if delta:
+                                ok = self._realtime_patch_face_embeddings(
+                                    target_id, delta
+                                )
+                                if DEFAULT_EMBEDDING_SOURCE in delta:
+                                    ok = ok and self._realtime_patch_face(
+                                        target_id,
+                                        {"embedding": delta[DEFAULT_EMBEDDING_SOURCE]},
+                                    )
+                                if ok:
+                                    target.setdefault("embeddings", {})
+                                    target["embeddings"].update(delta)
+                                    if DEFAULT_EMBEDDING_SOURCE in delta:
+                                        target["embedding"] = delta[
+                                            DEFAULT_EMBEDDING_SOURCE
+                                        ]
+                                    continue
+                                logger.error(
+                                    "Failed to patch delta embeddings into Realtime DB face %s",
+                                    target_id,
+                                )
+
+                        # If no suitable face to enrich (or nothing missing), create a new record
+
+                    record["id"] = self._next_face_id()
+                    self.data["faces"].append(record)
+                    if not self._realtime_write_face_record(record):
+                        logger.error("Failed to write appended face to Realtime DB")
+                        # Keep local state consistent
+                        self.data["faces"].pop()
+                        break
             else:
                 for record in face_records:
                     record["id"] = len(self.data["faces"])
@@ -1894,7 +2574,8 @@ class FaceDatabase:
             else:
                 try:
                     query_vec = self._normalize_embedding_vector(query_embedding)
-                    query_bundle[DEFAULT_EMBEDDING_SOURCE] = query_vec
+                    # Do not assume a backend key for raw vectors; treat as primary.
+                    query_bundle["__primary__"] = query_vec
                 except ValueError:
                     return []
 
@@ -1911,7 +2592,8 @@ class FaceDatabase:
             for face in faces_iter:
                 stored_bundle = face.get("embeddings") or {}
                 if not stored_bundle and face.get("embedding"):
-                    stored_bundle = {DEFAULT_EMBEDDING_SOURCE: face["embedding"]}
+                    # Back-compat: faces may only have a primary embedding
+                    stored_bundle = {"__primary__": face["embedding"]}
 
                 weighted_score = 0.0
                 weight_total = 0.0
@@ -1923,6 +2605,10 @@ class FaceDatabase:
                     try:
                         face_vec = self._normalize_embedding_vector(raw_face_vec)
                     except ValueError:
+                        continue
+
+                    # Prevent shape mismatch errors across embedding models (e.g., 128 vs 512).
+                    if face_vec.shape != q_vec.shape:
                         continue
 
                     similarity = float(np.dot(face_vec, q_vec))
@@ -1938,11 +2624,16 @@ class FaceDatabase:
                         fallback_face_vec = self._normalize_embedding_vector(
                             face.get("embedding")
                         )
-                        fallback_query_vec = next(iter(query_bundle.values()))
-                        similarity = float(
-                            np.dot(fallback_face_vec, fallback_query_vec)
-                        )
-                        score = similarity
+                        best: Optional[float] = None
+                        for q_vec in query_bundle.values():
+                            if q_vec.shape != fallback_face_vec.shape:
+                                continue
+                            sim = float(np.dot(fallback_face_vec, q_vec))
+                            if best is None or sim > best:
+                                best = sim
+                        if best is None:
+                            continue
+                        score = best
                     except (StopIteration, ValueError):
                         continue
                 else:

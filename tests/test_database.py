@@ -45,6 +45,21 @@ def test_add_face(temp_db):
     assert set(stored["embeddings"].keys()) == {"deepface", "dlib"}
 
 
+def test_add_face_enriches_existing_record_with_new_dimensions_only(temp_db):
+    """If a user exists and we add a NEW embedding key, add_face should patch it."""
+
+    # First add a deepface-only face.
+    assert temp_db.add_face({"deepface": [0.0, 1.0, 0.0, 0.0]}, "testuser", "profile")
+    assert len(temp_db.data["faces"]) == 1
+    assert "dlib" not in (temp_db.data["faces"][0].get("embeddings") or {})
+
+    # Now add dlib-only for the same user (new dimension key).
+    assert temp_db.add_face({"dlib": [1.0, 0.0, 0.0, 0.0]}, "testuser", "profile")
+    # Should not create a second face record; should enrich existing.
+    assert len(temp_db.data["faces"]) == 1
+    assert "dlib" in (temp_db.data["faces"][0].get("embeddings") or {})
+
+
 def test_get_all_embeddings(temp_db):
     """Test getting all embeddings"""
     # Add some faces
@@ -103,6 +118,18 @@ def test_search_similar_faces_with_bundles(temp_db):
     assert results[0]["username"] == "combo"
 
 
+def test_search_similar_faces_ignores_dimension_mismatch(temp_db):
+    """Search should not error when embeddings have different dimensions."""
+    # Store a 128-d face
+    temp_db.add_face(np.random.rand(128).tolist(), "small", "profile")
+
+    # Query with a 512-d vector (e.g., DeepFace Facenet512)
+    results = temp_db.search_similar_faces(np.random.rand(512).tolist(), threshold=0.0)
+
+    # No crash; may return 0 matches due to mismatch
+    assert isinstance(results, list)
+
+
 def test_append_embeddings_updates_profile_metadata(temp_db):
     """Ensure append_embeddings_to_username stores metadata and recomputes centroid."""
     base_embedding = {"deepface": np.ones(4).tolist()}
@@ -123,6 +150,31 @@ def test_append_embeddings_updates_profile_metadata(temp_db):
     metadata = temp_db.data["metadata"].get("tester")
     assert metadata["embeddings_count"] == 3
     assert "profile_embedding" in metadata
+
+
+def test_append_embeddings_patch_only_does_not_create_new_face(temp_db):
+    """Patch-only appends should enrich an existing record without creating new faces."""
+
+    # Start with a deepface-only record for a user.
+    temp_db.add_face({"deepface": np.ones(4).tolist()}, "tester", "profile")
+    assert len(temp_db.data["faces"]) == 1
+    before = temp_db.data["faces"][0]
+    assert "dlib" not in (before.get("embeddings") or {})
+
+    # Patch in a new embedding key.
+    summary = temp_db.append_embeddings_to_username(
+        "tester",
+        [{"dlib": [0.25, 0.25, 0.25, 0.25]}],
+        source="live_auto_enrich",
+        allow_create=False,
+    )
+
+    assert summary["added"] == 0
+    assert summary["patched"] == 1
+    assert summary["patched_keys"] >= 1
+    assert len(temp_db.data["faces"]) == 1
+    after = temp_db.data["faces"][0]
+    assert "dlib" in (after.get("embeddings") or {})
 
 
 def test_search_identity_returns_sorted_matches(temp_db):

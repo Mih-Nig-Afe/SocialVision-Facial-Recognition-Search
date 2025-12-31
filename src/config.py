@@ -43,6 +43,18 @@ class Config:
     REALTIME_BOOTSTRAP_FROM_LOCAL = (
         os.getenv("REALTIME_BOOTSTRAP_FROM_LOCAL", "False").lower() == "true"
     )
+    # Realtime DB write behavior:
+    # - REALTIME_DELTA_EMBEDDINGS: when a user already has a face record that is missing
+    #   some embedding keys (e.g., dlib), only PATCH the missing keys instead of
+    #   creating a new face record (keeps uploads minimal).
+    # - REALTIME_STORE_PROFILE_EMBEDDING: whether to persist profile centroid vectors
+    #   to RTDB (can increase write sizes). Disabled by default.
+    REALTIME_DELTA_EMBEDDINGS = (
+        os.getenv("REALTIME_DELTA_EMBEDDINGS", "True").lower() == "true"
+    )
+    REALTIME_STORE_PROFILE_EMBEDDING = (
+        os.getenv("REALTIME_STORE_PROFILE_EMBEDDING", "False").lower() == "true"
+    )
     FIRESTORE_COLLECTION_PREFIX = os.getenv(
         "FIRESTORE_COLLECTION_PREFIX", "socialvision_"
     )
