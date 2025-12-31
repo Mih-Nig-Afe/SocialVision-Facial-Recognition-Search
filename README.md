@@ -7,7 +7,7 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ed.svg)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-SocialVision is an academic research project that builds an end‑to‑end facial recognition search engine for operator-curated visual datasets. The stack combines **DeepFace (TensorFlow/Keras)** embeddings with **dlib/face_recognition** encodings, fuses both vectors per face, and exposes the experience through a Streamlit UI, local JSON database, and automated tests that keep the pipeline reproducible.
+SocialVision is an academic research project that builds an end‑to‑end facial recognition search engine for operator-curated visual datasets. The stack combines **DeepFace (TensorFlow/Keras)** embeddings with **dlib/face_recognition** encodings, stores both vectors per face, and exposes the experience through a Streamlit UI plus multiple persistence backends (local JSON, Firebase Realtime Database, Firestore).
 
 > **Maintainer**: Mihretab N. Afework ([@Mih-Nig-Afe](https://github.com/Mih-Nig-Afe)) · <mtabdevt@gmail.com>
 
@@ -30,13 +30,13 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 
 | Area | Highlights |
 |------|------------|
-| **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, automatic fallbacks if TensorFlow is unavailable. |
-| **Face Search Engine** | Detection, embedding, cosine similarity search, identity aggregation, configurable thresholds, enrichment workflows that continuously learn from matches. |
-| **Self-Training Profiles** | When a search match clears the confidence threshold the system automatically appends that face’s embeddings back into the person’s profile, expanding per-user dimensions/metadata without manual labeling. |
+| **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, and safe handling of mixed dimensions (e.g. 128 vs 512). |
+| **Face Search Engine** | Mode-agnostic matching: whatever extraction mode is used, search compares against the whole DB using compatible embedding keys and dimensions. |
+| **Self-Training Profiles** | Confident matches trigger enrichment that **adds only missing embedding keys (“dimensions”)** for that identity instead of re-uploading everything. |
 | **High-Fidelity Preprocessing** | Real-ESRGAN is the default super-resolution backend with configurable pass counts, minimum trigger scale, and per-image tile targeting (e.g., force ~25 tiles per inference) while the IBM MAX sidecar and NCNN CLI remain optional accelerators. When GPU memory is unavailable, the pipeline automatically clamps to CPU-safe settings before falling back on OpenCV/Lanczos. |
 | **Streamlit Command Center** | Tabs for Search, Add Faces, Analytics; live metrics, threshold sliders, backend telemetry, and enrichment summaries meant for operator demos. |
-| **Data Layer** | Firestore-backed `FaceDatabase` is now the recommended runtime (automatic collection provisioning, provenance metadata, username centroid cache) with the JSON store still available for fully offline demos. |
-| **Operations** | Docker image with BuildKit pip caching (no repeated TensorFlow wheel downloads), DeepFace weight prefetch, CLI demo script, logging + health checks. |
+| **Data Layer** | Supports local JSON, Firebase Realtime Database (incremental writes + delta embedding patches), and Firestore. `DB_TYPE=firebase` prefers Realtime DB first, then falls back to Firestore, then local JSON. |
+| **Operations** | Docker image designed for reproducible builds (layer caching, staged dependency installs), DeepFace weight prefetch, CLI demo script, logging + health checks. |
 | **Quality & Docs** | Pytest coverage for engine/database/search, reproducible fixtures, comprehensive docs mirroring professional OSS projects. |
 
 ---
@@ -102,7 +102,6 @@ streamlit run src/app.py
 ### Docker Workflow (recommended for demos)
 
 ```bash
-export DOCKER_BUILDKIT=1
 docker compose build
 docker compose up -d
 # or
@@ -111,7 +110,7 @@ docker compose up -d
 
 Features of the container image:
 
-- BuildKit cache mount for pip (`/root/.cache/pip`) so large wheels (TensorFlow, DeepFace) download once.
+- Uses Docker layer caching and staged dependency installs to reduce rebuild time for large ML packages.
 - Pre-fetch of DeepFace weights during build, reducing cold-start latency.
 - Health check hitting `/_stcore/health` to signal readiness.
 - Real-ESRGAN weights baked into `models/` plus environment-driven tiling so Docker-on-Mac users can force ~25 tiles per frame without editing code.
@@ -176,6 +175,13 @@ Key environment variables (see `src/config.py` for defaults):
 | `DB_TYPE` | `local`, `firestore`, `realtime`, or `firebase` (Firestore preferred → Realtime fallback → local fallback); controls which backend `FaceDatabase` instantiates. |
 | `FIREBASE_DATABASE_URL` | Realtime Database URL (e.g. `https://<project>.firebaseio.com`). |
 | `FIREBASE_DB_ROOT` | Realtime Database root path (default `faces_database`). |
+| `REALTIME_DELTA_EMBEDDINGS` | When `true` (default), Realtime DB writes patch only missing embedding keys instead of re-uploading whole records. |
+| `REALTIME_STORE_PROFILE_EMBEDDING` | When `true`, persists per-username centroid embeddings to Firebase; default `false` to minimize payload size. |
+| `LIVE_AUTO_ENRICH_ENABLED` | Enables live-camera auto-enrichment after confident matches (default `true`). |
+| `LIVE_AUTO_ENRICH_FLUSH_SECONDS` | Batch flush interval for live-camera enrichment (default `2`). |
+| `LIVE_AUTO_ENRICH_MAX_PENDING` | Batch size threshold for live-camera enrichment flush (default `25`). |
+| `LIVE_AUTO_ENRICH_COOLDOWN_SECONDS` | Per-username cooldown for live enrichment to prevent spam (default `0`). |
+| `ULTRA_FAST_EMBEDDING_KEY` | Embedding key used by ultra-fast search (default `dlib`). |
 | `FIRESTORE_DATABASE_ID` | Firestore database ID (default `(default)`). |
 | `FIRESTORE_LOCATION_ID` | Region for Firestore (e.g. `us-central`, `nam5`). |
 | `UPSCALE_RETRY_ENABLED` | Enables the “detect → upscale → retry” workflow when faces/embeddings/matches aren’t found (default `true`). |
@@ -217,7 +223,7 @@ The data layer can be switched to **Google Cloud Firestore (native mode)** so th
     ```
 
     ```bash
-    # Auto mode: prefer Firestore, fall back to Realtime Database
+    # Auto mode: prefer Realtime Database, fall back to Firestore, then local JSON
     export DB_TYPE=firebase
     export FIREBASE_ENABLED=true
     export FIREBASE_PROJECT_ID="your-project-id"
@@ -230,6 +236,8 @@ The data layer can be switched to **Google Cloud Firestore (native mode)** so th
 4. Start the app (`streamlit run src/app.py` or `docker compose up`). If the `(default)` database is missing, SocialVision will invoke the Firestore Admin API (using your service account) to create it in the region you specified. Afterwards, the backend creates two collections—`<prefix>faces` and `<prefix>profiles`—and every new embedding bundle is written directly to Firestore. Profile centroids stay cached in `<prefix>profiles` for fast identity searches.
 
 With `DB_TYPE=firestore`, the project never exports face data to `data/faces_database.json`; enrichment, search, and analytics all operate against Firestore in real time.
+
+With `DB_TYPE=realtime` (or `DB_TYPE=firebase` when Realtime DB is available), writes are incremental and enrichment prefers **delta-only patches** (upload only missing embedding keys).
 
 ---
 

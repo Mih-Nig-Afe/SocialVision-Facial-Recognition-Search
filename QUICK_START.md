@@ -38,6 +38,10 @@ http://localhost:8501
    - Enter username: "test_user"
    - Click "➕ Add to Database"
 
+   Notes:
+   - If the username already exists, SocialVision will **only upload missing embedding keys** (new “dimensions”, e.g. add `dlib` later without re-uploading `deepface`).
+   - Repeated uploads with no new embedding keys will still create new face samples (useful for improving robustness).
+
 2. **Search for Faces:**
    - Go to "🔎 Search" tab
    - Upload the same (or similar) image
@@ -86,7 +90,7 @@ If the microservice is temporarily unreachable, set `IBM_MAX_FAILURE_THRESHOLD=1
 - `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE=1.0` keeps Real-ESRGAN active for even minor touch-ups; raise it if you want to skip AI passes for tiny images.
 - To run against Google Firestore instead of the local JSON DB, set `DB_TYPE=firestore`, `FIREBASE_ENABLED=true`, and provide a service account at `config/firebase_config.json` (mount it into the container).
 - To run against Firebase Realtime Database, set `DB_TYPE=realtime`, plus `FIREBASE_DATABASE_URL` and credentials.
-- To prefer Firestore but fall back to Realtime Database automatically (and then to local JSON as a last resort), set `DB_TYPE=firebase`.
+- To prefer Firebase Realtime Database but fall back to Firestore automatically (and then to local JSON as a last resort), set `DB_TYPE=firebase`.
 
 ---
 

@@ -16,7 +16,7 @@ Central knowledge base for the SocialVision research project. Use this index to 
 
 ### Deployment & Demo Guides
 
-- **[DOCKER_TESTING_GUIDE.md](DOCKER_TESTING_GUIDE.md)** – BuildKit workflow, Compose profiles, GPU notes, common errors.
+- **[DOCKER_TESTING_GUIDE.md](DOCKER_TESTING_GUIDE.md)** – Compose workflow, CPU/GPU notes, common errors.
 - **[DEMONSTRATION_GUIDE.md](DEMONSTRATION_GUIDE.md)** – End-to-end demo scripts and talking points.
 
 ---
@@ -33,11 +33,11 @@ Central knowledge base for the SocialVision research project. Use this index to 
 
 | Document | Status | Last Updated |
 |----------|--------|--------------|
-| PROJECT_STATUS.md | 🔄 In Sync | Dec 2025 (Real-ESRGAN tiling + Firestore) |
-| CURRENT_CAPABILITIES.md | 🔄 In Sync | Dec 2025 (AI upscaler + Firestore live) |
+| PROJECT_STATUS.md | 🔄 In Sync | Dec 2025 (mode-agnostic matching + delta uploads) |
+| CURRENT_CAPABILITIES.md | 🔄 In Sync | Dec 2025 (mode-agnostic matching + delta uploads) |
 | TESTING_GUIDE.md | 🔄 Updated | Dec 2025 (multi-backend QA) |
 | DOCKER_TESTING_GUIDE.md | 🔄 Updated | Dec 2025 (target tiles + compose) |
-| DEMONSTRATION_GUIDE.md | 🔄 Updated | Dec 2025 (Firestore-first demos) |
+| DEMONSTRATION_GUIDE.md | 🔄 Updated | Dec 2025 (multi-backend demos) |
 | DEVELOPMENT_ROADMAP.md | 🔄 Updated | Dec 2025 (Phase 5 focus) |
 | Technical Proposal | 🔄 Updated | Dec 2025 (stack modernization) |
 | API Documentation | ⏳ Planned | TBA |
@@ -56,5 +56,5 @@ Questions or requests for documentation updates:
 
 ---
 
-Last updated: December 2025 (Real-ESRGAN tiling & Firestore refresh)
+Last updated: December 2025 (mode-agnostic matching + delta uploads refresh)
 

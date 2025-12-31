@@ -1,17 +1,19 @@
 # SocialVision Current Capabilities
 
-**Version:** 1.3.0  
-**Last Updated:** December 2025 (Real-ESRGAN tiling + Firestore)  
+**Version:** 1.0.0  
+**Last Updated:** December 2025 (mode-agnostic matching + delta embedding uploads)  
 **Audience:** Engineers, QA, demo facilitators
 
 ---
 
 ## Snapshot
 
-- **Dual Embedding Bundles:** Every detected face stores DeepFace (Facenet512) + dlib encodings, normalized, weighted, and persisted for deterministic scoring.
+- **Dual Embedding Bundles:** Faces can store DeepFace (Facenet512) and/or dlib encodings side-by-side.
+- **Mode-Agnostic Matching:** Searches compare against the full DB regardless of extraction mode, using only compatible embedding keys and dimensions (prevents 128 vs 512 crashes).
+- **Delta-Only Enrichment:** When a face is recognized confidently, the system enriches that identity by **adding only missing embedding keys (“dimensions”)** instead of re-uploading existing vectors.
 - **High-Detail Preprocessing:** Native Real-ESRGAN is now the default super-resolution backend with configurable pass counts, minimum trigger scale, and per-frame tile targeting (e.g., force ~25 tiles). When IBM MAX or the NCNN CLI are available they slot ahead of OpenCV/Lanczos, but CPU-only Docker automatically clamps Real-ESRGAN to a single 4× pass to stay responsive.
 - **Search Pathways:** Rank results per face, aggregate matches by username, enrich identities by appending fresh embeddings post-match.
-- **Self-Training Profiles:** When a search discovers a confident match, the embedding bundle from that query is written back to the person’s profile with provenance metadata, so the system keeps learning dimensional stats (embeddings count, last added face, similarity history) automatically.
+- **Self-Training Profiles:** Confident matches write back enrichment metadata (origin, trigger similarity, batch size) so identities improve over time.
 - **Operational Tooling:** Streamlit tri-tab UI, Docker build with pip cache mount, DeepFace weight prefetch, JSON database auto-versioning.
 - **Quality Baseline:** Pytest suites cover engine/database/search; Streamlit workflows rely on the same API contracts.
 
@@ -24,11 +26,12 @@
 | Face detection | ✅ | DeepFace detector primary; face_recognition fallback. |
 | Embedding extraction | ✅ | Dual embeddings per face; configurable weights. |
 | Local database | ✅ | Stores bundles + primary vectors + metadata. |
-| Similarity search | ✅ | Weighted cosine similarity; profile centroids per username. |
+| Similarity search | ✅ | Weighted cosine similarity; dimension-safe + bundle-aware scoring. |
 | Streamlit UI | ✅ | Search / Add / Analytics tabs with live metrics. |
-| Auto-training enrichment | ✅ | Search matches append embeddings + metadata back into each identity to grow their profile dimensions without manual labeling. |
+| Auto-training enrichment | ✅ | After a confident match, adds only missing embedding keys (delta enrichment) and avoids rewriting full records. |
 | Image upscaling | ✅ | Real-ESRGAN-first pipeline with configurable minimum trigger scale, max passes, target tile count, and CPU-aware clamps; IBM MAX and the NCNN CLI remain optional accelerators ahead of OpenCV/Lanczos. |
-| Firestore integration | ✅ | Firestore-backed `FaceDatabase` provisions collections automatically, keeps provenance metadata, and mirrors writes with the enrichment pipeline; JSON store remains for offline-only demos. |
+| Firebase Realtime DB integration | ✅ | Incremental writes + delta embedding patches to avoid oversized payloads; JSON store remains for offline-only demos. |
+| Firestore integration | ✅ | Available as an alternative backend; JSON store remains for offline-only demos. |
 | Batch processing | ✅ | `FaceRecognitionEngine.batch_process_images` for offline ingestion. |
 | Dockerized runtime | ✅ | BuildKit cache for TensorFlow, DeepFace weight caching, health checks. |
 | Testing | ✅ | `tests/` suites covering engine, DB, search flows. |
@@ -49,7 +52,7 @@
 
 1. Open **Add Faces** tab → upload image → provide username + source (profile_pic/post/story/reel).
 2. For each detected face the UI now posts the full embedding bundle to the database.
-3. Database normalizes, stores metadata, and recomputes the username centroid cache.
+3. If the username already exists, the database will prefer **delta-only updates** (only missing embedding keys) rather than duplicating vectors.
 
 ### Programmatic Snippet
 
@@ -75,7 +78,7 @@ matches = db.search_similar_faces(query, threshold=0.35, top_k=5)
 | Area | Details | Mitigation |
 |------|---------|------------|
 | Data store | JSON file scales linearly; no vector index. | Keep dataset <10k faces or migrate to vector DB (planned). |
-| Cloud sync | Firestore is default but still single-region. | Enable backup tooling / multi-region replication via Firebase console. |
+| Cloud sync | Firebase backends are still single-region by default. | Enable backup tooling / multi-region replication via Firebase console. |
 | Automation | External ingestion and API endpoints not implemented. | Streamlit UI/manual uploads only for now. |
 | GPU utilization | Pipelines run on CPU by default; containers assume CPU. | Evaluate GPU-enabled base image when moving beyond research demos. |
 
@@ -111,9 +114,9 @@ pytest tests/test_database.py -vv
 
 Manual smoke tests:
 
-1. Run Streamlit, add a face, confirm database entry includes both `deepface` and `dlib` vectors.
-2. Search for that face; check similarity score ≥ threshold and enrichment summary.
-3. Rebuild Docker image with `DOCKER_BUILDKIT=1 docker compose build` to verify pip caching stage.
+1. Run Streamlit, add a face, confirm database entry includes expected embedding keys (`deepface` and/or `dlib`).
+2. Search for that face in the other mode; confirm match succeeds and enrichment reports delta updates when needed.
+3. Rebuild Docker image with `docker compose build` and verify cached layers reduce rebuild time.
 
 ---
 

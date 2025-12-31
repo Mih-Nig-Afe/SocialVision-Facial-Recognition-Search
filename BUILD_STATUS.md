@@ -21,13 +21,13 @@ docker build -t socialvision-app .
 Or with docker-compose:
 
 ```bash
-docker-compose build
+docker compose build
 ```
 
 ## Run Command
 
 ```bash
-docker-compose up
+docker compose up
 ```
 
 Or directly:

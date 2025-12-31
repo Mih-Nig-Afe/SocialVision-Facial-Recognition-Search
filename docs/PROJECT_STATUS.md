@@ -1,21 +1,23 @@
 # SocialVision Project Status
 
-**Last updated:** December 2025 (Real-ESRGAN tiling + Firestore)  
+**Last updated:** December 2025 (mode-agnostic matching + delta embedding uploads)  
 **Current phase:** Phase 5 – Cloud Persistence & Operational Hardening  
-**Overall completion:** ~74%
+**Overall completion:** ~78%
 
 ---
 
 ## Executive Summary
 
-SocialVision now delivers a working demo stack that extracts dual embeddings (DeepFace + dlib), stores bundle-aware vectors, defaults to Firestore for persistence, and exposes a Streamlit operator console. The remaining roadmap focuses on hardening the hosted Firestore deployment, exposing public APIs, and automating data ingestion.
+SocialVision now delivers a working demo stack that extracts dual embeddings (DeepFace + dlib), stores bundle-aware vectors, supports Firebase Realtime Database incremental persistence, and exposes a Streamlit operator console. The remaining roadmap focuses on hardening the cloud deployment, exposing public APIs, and automating data ingestion.
 
 ### Highlights This Iteration
 
 - Dual-embedding pipeline with weighted similarity search is live end-to-end.
 - Docker build uses BuildKit pip caching and pre-fetches DeepFace weights, shrinking rebuilds by ~60%.
 - Real-ESRGAN is now the default super-resolution backend with configurable minimum trigger scale, pass count, and per-frame tile targeting (`IMAGE_UPSCALING_TARGET_TILES` keeps ~25 tiles even on CPU Docker). IBM MAX and the NCNN CLI remain optional accelerators.
-- Firestore-backed `FaceDatabase` ships as the default runtime (auto-provisions collections, tracks provenance metadata, username centroid cache) while the JSON store is retained for offline demos.
+- Mode-agnostic matching: both fast (dlib) and deep (DeepFace) searches compare against the same DB safely (no 128 vs 512 crashes).
+- Firebase Realtime Database persistence was redesigned to avoid “request too large”: writes are incremental, and enrichment prefers **delta-only embedding patches**.
+- Live-camera fast mode now persists enrichment reliably via background batching and patch-only fallbacks when DeepFace vectors are unavailable.
 - Documentation overhaul (README + capabilities + status) brings parity with established OSS projects.
 - Auto-enrichment loop takes every confident search match and appends its embeddings back into the person’s profile, so dimensional metrics stay fresh without manual curation.
 
@@ -31,7 +33,8 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 | Streamlit UI | ✅ Complete (90%) | Search/Add/Analytics tabs; advanced filters pending. |
 | Docker & DevOps | ✅ Complete | BuildKit cache, DeepFace weight caching, health checks. |
 | Testing | ✅ Complete (unit) | Pytest coverage for engine, DB, search. |
-| Firestore/cloud storage | ✅ Complete | Firestore driver live w/ auto-provision + JSON fallback. |
+| Firebase Realtime DB storage | ✅ Complete | Incremental writes + delta embedding patches. |
+| Firestore/cloud storage | ✅ Complete | Available as an alternative backend. |
 | Automated ingestion | 🚧 Not started | Manual uploads only today. |
 | Public API (FastAPI) | 🚧 Not started | Streamlit doubles as controller for now. |
 
@@ -54,7 +57,8 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 ### Search & Enrichment
 
 - `SearchEngine` consumes bundles, aggregates matches by username, and enriches identities by appending newly captured embeddings.
-- `_auto_enrich_identity` records the similarity that triggered the update plus provenance metadata so profiles track their own dimensional growth (total embeddings, last added face ID, confidence history).
+- `_auto_enrich_identity` records the similarity that triggered the update plus provenance metadata.
+- Enrichment is **delta-aware**: when a user already exists, the system only uploads missing embedding keys (“dimensions”) rather than re-uploading existing vectors.
 - Thresholds and top-k settings surfaced in the Streamlit UI, along with per-face match breakdowns.
 
 ### Operations & Tooling
@@ -96,7 +100,7 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 
 ## Quality Metrics
 
-- **Automated tests:** `pytest tests/ -v` (26 tests) – green on Python 3.9–3.11.
+- **Automated tests:** `pytest tests/ -v` (57 tests) – green on Python 3.9+.
 - **Manual smoke:** Streamlit Search/Add/Analytics, enrichment workflow, Docker BuildKit build.
 - **Logging:** Structured logs across engine, DB, search; Streamlit surfaces user-facing alerts.
 
