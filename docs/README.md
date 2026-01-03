@@ -11,9 +11,10 @@ Central knowledge base for the SocialVision research project. Use this index to 
 1. **[PROJECT_STATUS.md](PROJECT_STATUS.md)** – Executive summary, completion metrics, risks, KPIs.
 2. **[CURRENT_CAPABILITIES.md](CURRENT_CAPABILITIES.md)** – Quick feature reference, usage snippets, limitations.
 3. **[ARCHITECTURE.md](ARCHITECTURE.md)** – System architecture + UML/Mermaid diagrams (image/video/live flows).
-4. **[TESTING_GUIDE.md](TESTING_GUIDE.md)** – Automated + manual test recipes, troubleshooting trees.
-5. **[DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md)** – Phase definitions, milestones, priority backlog.
-6. **[SocialVision_Technical_Proposal.md](SocialVision_Technical_Proposal.md)** – Full architecture and research narrative.
+4. **[API_USAGE.md](API_USAGE.md)** – FastAPI endpoints + runnable curl examples.
+5. **[TESTING_GUIDE.md](TESTING_GUIDE.md)** – Automated + manual test recipes, troubleshooting trees.
+6. **[DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md)** – Phase definitions, milestones, priority backlog.
+7. **[SocialVision_Technical_Proposal.md](SocialVision_Technical_Proposal.md)** – Full architecture and research narrative.
 
 ### Deployment & Demo Guides
 
@@ -42,7 +43,7 @@ Central knowledge base for the SocialVision research project. Use this index to 
 | DEMONSTRATION_GUIDE.md | 🔄 Updated | Jan 2026 (multi-backend + video/live demos) |
 | DEVELOPMENT_ROADMAP.md | 🔄 Updated | Jan 2026 (Firebase status corrected) |
 | Technical Proposal | 🔄 Updated | Dec 2025 (stack modernization) |
-| API Documentation | ⏳ Planned | TBA |
+| API_USAGE.md | 🆕 Added | Jan 2026 (FastAPI endpoints + examples) |
 | Installation Guide | 🔄 Covered in root README/Quick Start | Dec 2025 (Real-ESRGAN defaults) |
 
 Dates reflect the last substantive edit, not formatting changes. If you touch a document, bump the date and summarize the change at the top of that file.

@@ -20,6 +20,7 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 - Firebase Realtime Database persistence was redesigned to avoid “request too large”: writes are incremental, and enrichment prefers **delta-only embedding patches**.
 - Live-camera fast mode now persists enrichment reliably via background batching and patch-only fallbacks when DeepFace vectors are unavailable.
 - Documentation overhaul (README + capabilities + status) brings parity with established OSS projects.
+- Architecture documentation added with GitHub-rendered UML-style diagrams and end-to-end processing sequences.
 - Auto-enrichment loop takes every confident search match and appends its embeddings back into the person’s profile, so dimensional metrics stay fresh without manual curation.
 
 ---
@@ -37,7 +38,7 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 | Firebase Realtime DB storage | ✅ Complete | Incremental writes + delta embedding patches. |
 | Firestore/cloud storage | ✅ Complete | Available as an alternative backend. |
 | Automated ingestion | 🚧 Not started | Manual uploads only today. |
-| Public API (FastAPI) | 🚧 Not started | Streamlit doubles as controller for now. |
+| Public API (FastAPI) | ✅ MVP shipped | REST endpoints exist for search/add/enrich over image/video/camera frames; auth/rate limiting still pending. |
 
 ---
 
@@ -94,7 +95,7 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 |------|--------|------------|
 | Firestore backups/security | Single-region backups still manual, IAM needs hardening | Script scheduled exports, document least-privilege service accounts, keep JSON fallback for emergencies. |
 | Manual ingestion workflows | Limits authenticity of research demos | Build ingestion pipeline once legal review passes. |
-| No public API | Integrations must screen-scrape UI | Prioritize FastAPI service once Firebase groundwork is done. |
+| Unhardened public API | Hosted deployments may need auth/rate limits | Add authentication, rate limiting, and stricter request validation before exposing publicly. |
 | Lack of automated deployment | Hard to share hosted demo | Container image is ready; need hosting plan once cloud storage exists. |
 
 ---
@@ -112,8 +113,8 @@ Gaps: no load, fuzz, or security testing yet.
 ## Next 30-Day Objectives
 
 1. Harden Firestore deployment (security rules, automated exports, documentation) while keeping the JSON fallback healthy.
-2. Draft FastAPI skeleton exposing search/add endpoints and shared validators.
-3. Extend documentation with API draft + data retention policy.
+2. Harden the FastAPI layer (auth, rate limiting, API docs polish) for non-demo deployments.
+3. Extend documentation with API usage notes + data retention policy.
 4. Evaluate FAISS/Annoy for similarity search to inform vector DB migration plan (still required for >10k faces).
 
 ---
@@ -121,6 +122,8 @@ Gaps: no load, fuzz, or security testing yet.
 ## References
 
 - [`README.md`](../README.md)
+- [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- [`API_USAGE.md`](API_USAGE.md)
 - [`CURRENT_CAPABILITIES.md`](CURRENT_CAPABILITIES.md)
 - [`DEVELOPMENT_ROADMAP.md`](DEVELOPMENT_ROADMAP.md)
 - [`TESTING_GUIDE.md`](TESTING_GUIDE.md)

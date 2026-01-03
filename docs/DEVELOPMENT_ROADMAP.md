@@ -201,7 +201,7 @@ Note: the codebase has evolved beyond the original week-by-week plan (multi-back
 
 ### Phase 8: API Development (Weeks 18-19)
 
-**Status:** ❌ **Not Started**
+**Status:** ⚠️ **In Progress (MVP delivered)**
 
 **Objectives:**
 - Create RESTful API endpoints
@@ -210,12 +210,12 @@ Note: the codebase has evolved beyond the original week-by-week plan (multi-back
 - Rate limiting
 
 **Tasks:**
-1. Set up FastAPI/Flask
-2. Create API routes
-3. Implement authentication
-4. Add rate limiting
-5. Create API documentation
-6. Testing
+1. ✅ Set up FastAPI
+2. ✅ Create API routes for search/add/enrich (image, video, camera frames)
+3. 🚧 Implement authentication
+4. 🚧 Add rate limiting
+5. 🚧 Create API documentation (usage guide + examples)
+6. ✅ Testing (unit coverage for pipeline/search/video sampling already exists)
 
 **Estimated Effort:** 2 weeks
 
@@ -331,7 +331,7 @@ Note: the codebase has evolved beyond the original week-by-week plan (multi-back
 | Phase 5: Testing | ⚠️ In Progress | 40% |
 | Phase 6: Firebase | ✅ Complete | 100% |
 | Phase 7: External Ingestion | ❌ Not Started | 0% |
-| Phase 8: API | ❌ Not Started | 0% |
+| Phase 8: API | ⚠️ In Progress | 50% |
 | Phase 9: Advanced | ❌ Not Started | 0% |
 
 ### Feature Completion
@@ -346,7 +346,7 @@ Note: the codebase has evolved beyond the original week-by-week plan (multi-back
 | Unit Tests | ✅ Complete | High |
 | Firebase Integration | ✅ Complete | High |
 | External Data Integration | ❌ Not Started | Medium |
-| API Endpoints | ❌ Not Started | Medium |
+| API Endpoints | ⚠️ Partial (MVP shipped) | Medium |
 | Advanced Features | ⚠️ Partial | Low |
 | Performance Optimization | ❌ Not Started | Medium |
 | Security Features | ⚠️ Partial | High |

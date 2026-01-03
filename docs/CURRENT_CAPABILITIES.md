@@ -12,11 +12,13 @@
 - **Mode-Agnostic Matching:** Searches compare against the full DB regardless of extraction mode, using only compatible embedding keys and dimensions (prevents 128 vs 512 crashes).
 - **Delta-Only Enrichment:** When a face is recognized confidently, the system enriches that identity by **adding only missing embedding keys (“dimensions”)** instead of re-uploading existing vectors.
 - **Video + Live Camera Inputs:** Search and Add workflows support image uploads, sampled video frames, and live camera capture (WebRTC when available; capture-based mode otherwise).
-- **Fast / Ultra-Fast Recognition:** A dlib (128-d) fast mode exists for responsiveness, with optional in-memory caching for ultra-fast searches.
+- **Fast / Ultra-Fast Recognition:** A dlib (128-d) fast mode exists for responsiveness, with optional in-memory caching for ultra-fast searches (cache TTLs are environment-controlled).
+- **Face Quality Gate + Auto-Improve:** Optional quality scoring (blur/brightness/contrast/sharpness) can reject poor frames and automatically apply improvements before embedding.
 - **High-Detail Preprocessing:** Native Real-ESRGAN is now the default super-resolution backend with configurable pass counts, minimum trigger scale, and per-frame tile targeting (e.g., force ~25 tiles). When IBM MAX or the NCNN CLI are available they slot ahead of OpenCV/Lanczos, but CPU-only Docker automatically clamps Real-ESRGAN to a single 4× pass to stay responsive.
 - **Search Pathways:** Rank results per face, aggregate matches by username, enrich identities by appending fresh embeddings post-match.
 - **Self-Training Profiles:** Confident matches write back enrichment metadata (origin, trigger similarity, batch size) so identities improve over time.
 - **Operational Tooling:** Streamlit operator console, Docker build designed for reproducible installs (staged dependency installs + layer caching), DeepFace weight prefetch, JSON database auto-versioning.
+- **Programmatic Access:** A FastAPI service exposes search/add/enrich endpoints for images, videos, and camera frames.
 - **Quality Baseline:** Pytest suites cover engine/database/search; Streamlit workflows rely on the same API contracts.
 
 ---
@@ -37,11 +39,14 @@
 | Video upload search | ✅ | Samples frames (`VIDEO_FRAME_STRIDE`, `VIDEO_MAX_FRAMES`) and aggregates matches per username. |
 | Live camera recognition | ✅ | WebRTC when available outside Docker; capture-based mode as fallback. |
 | Fast mode search | ✅ | dlib 128-d search path with optional upscale retry and detailed (512-d) fallback when needed. |
+| Ultra-fast embedding cache | ✅ | In-memory embedding cache for fast-mode searches; TTLs controlled by `EMBEDDING_CACHE_TTL_LOCAL` / `EMBEDDING_CACHE_TTL_FIRESTORE`. |
+| Face quality scoring | ✅ | Blur/brightness/contrast/sharpness scoring available; can filter low-quality faces before adding. |
+| Auto face improvement | ✅ | Optional CLAHE/denoise/sharpen pipeline to improve add/enrich inputs before embedding. |
 | Batch processing | ✅ | `FaceRecognitionEngine.batch_process_images` for offline ingestion. |
 | Dockerized runtime | ✅ | BuildKit cache for TensorFlow, DeepFace weight caching, health checks. |
 | Testing | ✅ | `tests/` suites covering engine, DB, search flows. |
 | Automated ingestion | 🚧 Planned | Manual uploads only today. |
-| API endpoints | 🚧 Planned | Streamlit UI currently drives core features. |
+| API endpoints (FastAPI) | ✅ | REST endpoints for enrich/search/add over image/video + base64 camera frames; includes `/health`. |
 
 ---
 
@@ -84,7 +89,8 @@ matches = db.search_similar_faces(query, threshold=0.35, top_k=5)
 |------|---------|------------|
 | Data store | JSON file scales linearly; no vector index. | Keep dataset <10k faces or migrate to vector DB (planned). |
 | Cloud sync | Firebase backends are still single-region by default. | Enable backup tooling / multi-region replication via Firebase console. |
-| Automation | External ingestion and API endpoints not implemented. | Streamlit UI/manual uploads only for now. |
+| Automation | External ingestion from third-party platforms is not implemented. | Streamlit UI + API exist today, but ingestion remains manual. |
+| API hardening | API is MVP-level (no auth/rate limits by default). | Add authentication, rate limiting, and request validation for hosted deployments. |
 | GPU utilization | Pipelines run on CPU by default; containers assume CPU. | Evaluate GPU-enabled base image when moving beyond research demos. |
 
 ---
@@ -138,6 +144,8 @@ Manual smoke tests:
 - `DB_TYPE=firestore` switches the database driver from JSON to Firestore.
 - `DB_TYPE=realtime` switches the database driver from JSON to Firebase Realtime Database.
 - `DB_TYPE=firebase` prefers Firebase Realtime Database and falls back to Firestore (then local JSON).
+- `EMBEDDING_CACHE_TTL_LOCAL` / `EMBEDDING_CACHE_TTL_FIRESTORE` tune ultra-fast cache lifetimes.
+- `LIVE_AUTO_ENRICH_ENABLED` and related `LIVE_AUTO_ENRICH_*` knobs control live-camera enrichment batching.
 
 See `src/config.py` for the full catalog.
 

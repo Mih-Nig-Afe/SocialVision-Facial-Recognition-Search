@@ -33,8 +33,11 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 | **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, and safe handling of mixed dimensions (e.g. 128 vs 512). |
 | **Face Search Engine** | Mode-agnostic matching: whatever extraction mode is used, search compares against the whole DB using compatible embedding keys and dimensions. |
 | **Self-Training Profiles** | Confident matches trigger enrichment that **adds only missing embedding keys (“dimensions”)** for that identity instead of re-uploading everything. |
+| **Input Modes** | Image upload, video upload (frame sampling), and live camera. Live camera runs via WebRTC when available; a capture-based fallback exists for environments without WebRTC support. |
+| **Face Quality Gate** | Optional face quality scoring (blur/brightness/contrast/sharpness) plus auto-improvement (CLAHE/denoise/sharpen) before adding/enriching faces. |
 | **High-Fidelity Preprocessing** | Real-ESRGAN is the default super-resolution backend with configurable pass counts, minimum trigger scale, and per-image tile targeting (e.g., force ~25 tiles per inference) while the IBM MAX sidecar and NCNN CLI remain optional accelerators. When GPU memory is unavailable, the pipeline automatically clamps to CPU-safe settings before falling back on OpenCV/Lanczos. |
 | **Streamlit Command Center** | Tabs for Search, Add Faces, Analytics; live metrics, threshold sliders, backend telemetry, and enrichment summaries meant for operator demos. |
+| **FastAPI Service (Optional)** | REST endpoints for search/add/enrich over images, videos, and camera frames (base64), plus a `/health` readiness endpoint. |
 | **Data Layer** | Supports local JSON, Firebase Realtime Database (incremental writes + delta embedding patches), and Firestore. `DB_TYPE=firebase` prefers Realtime DB first, then falls back to Firestore, then local JSON. |
 | **Operations** | Docker image designed for reproducible builds (layer caching, staged dependency installs), DeepFace weight prefetch, CLI demo script, logging + health checks. |
 | **Quality & Docs** | Pytest coverage for engine/database/search, reproducible fixtures, comprehensive docs mirroring professional OSS projects. |
@@ -143,6 +146,29 @@ Access the UI at `http://localhost:8501`.
 2. **📤 Add Faces** – Upload faces for specific usernames; the UI now uploads full embedding bundles so the database can blend DeepFace+dlib vectors.
 3. **📈 Analytics** – Watch total faces, unique users, and per-source charts sourced directly from the JSON database.
 
+### FastAPI (Optional)
+
+The repo includes a FastAPI app at `src/api.py`.
+
+Run locally:
+
+```bash
+uvicorn src.api:app --host 0.0.0.0 --port 8000
+```
+
+Then open Swagger UI at `http://localhost:8000/docs`.
+
+Implemented endpoints (high level):
+
+- `POST /api/enrich-face` (image upload)
+- `POST /api/enrich-video` (video upload + frame sampling)
+- `POST /api/search-face` (image upload)
+- `POST /api/search-video` (video upload)
+- `POST /api/search-camera` (base64 camera frame)
+- `POST /api/add-face` (image upload)
+- `POST /api/add-video` (video upload)
+- `GET /health`
+
 ### Programmatic Example
 
 ```python
@@ -178,11 +204,16 @@ Key environment variables (see `src/config.py` for defaults):
 | `IMAGE_UPSCALING_TARGET_TILES` | Desired number of Real-ESRGAN tiles per frame (default `0`, meaning “use the configured tile size”). Set to `25` to force roughly a 5×5 grid so that every image benefits from tiled inference, even on CPU-only Docker. |
 | `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE` | Smallest requested upscale factor that still triggers Real-ESRGAN (default `1.05`). Set to `1.0` to always run the AI upscaler even for near-1× touch-ups, or raise it if you prefer to skip Real-ESRGAN for tiny adjustments. |
 | `IBM_MAX_ENABLED` / `IBM_MAX_URL` / `IBM_MAX_TIMEOUT` | Toggle the IBM MAX Image Resolution Enhancer client, set its base URL, and override HTTP timeout. Note: `docker-compose.yml` disables IBM MAX by default for portability; `.env.example` shows an opt-in configuration. |
-| `IBM_MAX_HOST_PORT` | Host-side port that exposes the IBM MAX health/API endpoint (default `5100`); useful when `localhost:5000` is already reserved. |
-| `IBM_MAX_PLATFORM` | Docker platform string passed to the IBM MAX service (default `linux/amd64`); set to `linux/amd64` on Apple Silicon so QEMU emulation runs the upstream image. |
+| `IBM_MAX_HOST_PORT` | Docker/Compose-only variable (not read by the Python app). Controls which host port maps to the IBM MAX container when you run the optional `ibm-max` service. |
+| `IBM_MAX_PLATFORM` | Docker/Compose-only variable (not read by the Python app). Sets the `platform:` for the optional IBM MAX service (typically `linux/amd64`). |
 | `IBM_MAX_FAILURE_THRESHOLD` | Number of consecutive IBM MAX call failures allowed before the client auto-disables for the session (default `3`). |
 | `IBM_MAX_PROBE_ON_START` | `true` probes `/model/metadata` on startup and disables IBM MAX immediately if the endpoint cannot be reached (code default `false`). |
 | `NCNN_UPSCALING_ENABLED` / `NCNN_EXEC_PATH` / `NCNN_MODEL_NAME` | Configure the standalone Real-ESRGAN NCNN Vulkan executable path, model, and tiling so it can act as the next fallback when IBM MAX is unavailable. |
+| `MULTI_BACKEND_EXTRACTION` | When `true` (default), tries original + multiple preprocessing backends to maximize successful embedding extraction. |
+| `IMAGE_UPSCALING_BACKEND_PRIORITY` | Comma-separated backend order (default `realesrgan,opencv,lanczos`) used for automatic fallback selection. |
+| `MAX_IMAGE_SIZE` / `MAX_VIDEO_SIZE` | Maximum upload sizes (bytes) for images/videos. |
+| `VIDEO_FRAME_STRIDE` / `VIDEO_MAX_FRAMES` | Video sampling controls for video upload/search/add flows. |
+| `EMBEDDING_CACHE_TTL_LOCAL` / `EMBEDDING_CACHE_TTL_FIRESTORE` | Ultra-fast (in-memory) embedding cache TTLs for fast-mode search paths. |
 | `LOCAL_DB_PATH` | Path to JSON database (default `data/faces_database.json`). |
 | `DB_TYPE` | `local`, `firestore`, `realtime`, or `firebase` (Realtime preferred → Firestore fallback → local fallback); controls which backend `FaceDatabase` instantiates. |
 | `FIREBASE_DATABASE_URL` | Realtime Database URL (e.g. `https://<project>.firebaseio.com`). |
@@ -257,6 +288,7 @@ With `DB_TYPE=realtime` (or `DB_TYPE=firebase` when Realtime DB is available), w
 
 - **[docs/README.md](docs/README.md)** – navigation hub.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** – UML diagrams + end-to-end processing flows.
+- **[docs/API_USAGE.md](docs/API_USAGE.md)** – FastAPI endpoints + runnable examples.
 - **[docs/CURRENT_CAPABILITIES.md](docs/CURRENT_CAPABILITIES.md)** – quick reference for what works today.
 - **[docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** – phase progress, KPIs, and blocking issues.
 - **[docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md)** – manual + automated test instructions.

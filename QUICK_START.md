@@ -124,6 +124,16 @@ pip install -r requirements.txt
 streamlit run src/app.py
 ```
 
+### Live Camera on macOS (Recommended)
+
+For the best live camera experience (WebRTC), use the included local runner:
+
+```bash
+./run_local.sh
+```
+
+This exists because webcam/WebRTC support is often limited inside Docker on macOS due to VM/browser isolation.
+
 The application will open automatically in your browser.
 
 ---
