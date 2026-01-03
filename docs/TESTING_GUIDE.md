@@ -1,7 +1,7 @@
 # SocialVision Testing Guide
 
-**Version:** 1.0.0  
-**Last Updated:** December 2024
+**Version:** 1.1.0  
+**Last Updated:** January 2026
 
 ---
 
@@ -53,9 +53,14 @@ pytest tests/test_database.py -v
 
 ```
 tests/
-├── test_face_recognition.py    # Face recognition engine tests
-├── test_database.py            # Database tests
-└── test_search_engine.py       # Search engine tests
+├── test_database.py                    # Local + cloud backend semantics (and JSON backup behavior)
+├── test_face_recognition.py            # DeepFace / embedding extraction behaviors
+├── test_fast_recognition_ultra_cache.py# Ultra-fast path + cache behavior
+├── test_image_upscaling.py             # Upscaler behavior / fallbacks
+├── test_image_utils.py                 # Image + video helpers
+├── test_pipeline.py                    # Add/enrich pipeline logic
+├── test_search_engine.py               # Search ranking and aggregation
+└── test_video_processing.py            # Video frame sampling + aggregation
 ```
 
 ### Running Unit Tests
@@ -154,7 +159,7 @@ pytest tests/ --cov=src --cov-report=html
 
 ### Manual Integration Tests
 
-Since Firebase integration is not yet implemented, integration tests focus on the local system.
+Integration tests can be run against the default local JSON backend, or (optionally) against Firebase backends (Realtime Database / Firestore) by setting `DB_TYPE` and providing credentials.
 
 #### Test Workflow: Add Face → Search
 
@@ -299,14 +304,14 @@ The application will open in your browser at `http://localhost:8501`
    - Works with various image formats
 
 2. **Face Embedding Extraction**
-   - Extracts 512-dimensional embeddings
-   - Uses VGGFace2 model via DeepFace
-   - Processes batch images
+    - Extracts 512-dimensional embeddings via DeepFace (when enabled)
+    - Optional fast path uses dlib (128-dimensional) embeddings for responsiveness
+    - Handles mixed embedding dimensions safely during search/enrichment
 
-3. **Local Database Storage**
-   - Stores face embeddings in JSON format
-   - Persists data between sessions
-   - Supports metadata (username, source, timestamps)
+3. **Database Storage (Multiple Backends)**
+    - Local JSON database for offline mode
+    - Firebase Realtime Database and Firestore supported as alternative backends
+    - `DB_TYPE=firebase` auto-mode prefers Realtime DB, falls back to Firestore, then local JSON
 
 4. **Similarity Search**
    - Searches for similar faces
@@ -316,25 +321,25 @@ The application will open in your browser at `http://localhost:8501`
 
 5. **Web Interface**
    - Streamlit-based UI
-   - Image upload
+    - Image upload
+    - Video upload (sampled frames)
+    - Live camera capture (WebRTC when available; capture-based fallback)
    - Search interface
    - Analytics dashboard
 
 #### ⚠️ Limitations
 
-1. **No Firebase Integration**
-   - Only local JSON database
-   - No cloud storage
-   - No real-time sync
+1. **Cloud Backends Require Credentials/Network**
+    - Firestore/Realtime DB require valid Firebase credentials and network access
+    - For offline demos/tests, prefer the local JSON backend
 
 2. **No Automated Ingestion**
     - Manual face addition only
     - No automatic data collection
 
-3. **Embedding Dimension Mismatch**
-   - Database expects 128-dim embeddings
-   - Engine produces 512-dim embeddings
-   - **Note:** This needs to be fixed
+3. **Live WebRTC in Containers**
+    - WebRTC live camera mode is typically intended for local (non-Docker) runs
+    - In Docker environments, live capture may fall back to a non-WebRTC mode depending on browser/network constraints
 
 4. **Limited Test Data**
     - No real production data feed
@@ -615,5 +620,5 @@ def load_test_search(num_searches=100):
 
 ---
 
-*Last Updated: December 2024*
+*Last Updated: January 2026*
 

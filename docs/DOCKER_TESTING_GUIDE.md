@@ -1,7 +1,7 @@
 # Docker Testing Guide for SocialVision
 
-**Version:** 1.0.0  
-**Last Updated:** December 2024
+**Version:** 1.1.0  
+**Last Updated:** January 2026
 
 ---
 
@@ -10,15 +10,19 @@
 ### Prerequisites
 
 - Docker installed (version 20.10+)
-- Docker Compose installed (version 2.0+)
+- Docker Compose v2 plugin available (`docker compose`)
 - At least 4GB free disk space
 - Internet connection (for downloading dependencies)
+
+**Defaults (as shipped):**
+- `docker-compose.yml` sets `DB_TYPE=realtime` for the container by default.
+- The IBM MAX upscaler sidecar is optional and disabled/commented out by default.
 
 ### Verify Docker Installation
 
 ```bash
 docker --version
-docker-compose --version
+docker compose version
 ```
 
 ---
@@ -32,10 +36,10 @@ docker-compose --version
 cd /path/to/SocialVision-Facial-Recognition-Search
 
 # Build the Docker image
-docker-compose build
+docker compose build
 
 # Or build with no cache (if you want a fresh build)
-docker-compose build --no-cache
+docker compose build --no-cache
 ```
 
 **Expected Output:**
@@ -51,10 +55,10 @@ docker-compose build --no-cache
 
 ```bash
 # Start the application
-docker-compose up
+docker compose up
 
 # Or run in detached mode (background)
-docker-compose up -d
+docker compose up -d
 ```
 
 **Expected Output:**
@@ -85,23 +89,23 @@ You should see the SocialVision interface with:
 
 ```bash
 # Check if container is running
-docker-compose ps
+docker compose ps
 
 # View logs
-docker-compose logs
+docker compose logs
 
 # Follow logs in real-time
-docker-compose logs -f
+docker compose logs -f
 ```
 
 ### Step 5: Stop the Container
 
 ```bash
 # Stop the container
-docker-compose down
+docker compose down
 
 # Stop and remove volumes (cleans up data)
-docker-compose down -v
+docker compose down -v
 ```
 
 ---
@@ -113,9 +117,9 @@ docker-compose down -v
 **Goal:** Verify the application starts correctly
 
 **Steps:**
-1. Build and start: `docker-compose up -d`
+1. Build and start: `docker compose up -d`
 2. Wait 30-60 seconds for startup
-3. Check logs: `docker-compose logs socialvision`
+3. Check logs: `docker compose logs socialvision`
 4. Verify health: `curl http://localhost:8501/_stcore/health`
 
 **Expected Result:**
@@ -200,7 +204,7 @@ ERROR: failed to solve: process "/bin/sh -c pip install..." did not complete suc
 **Solutions:**
 ```bash
 # Clean build (no cache)
-docker-compose build --no-cache
+docker compose build --no-cache
 
 # Check Docker resources
 docker system df
@@ -219,7 +223,7 @@ Error: container exited with code 1
 **Solutions:**
 ```bash
 # Check logs
-docker-compose logs socialvision
+docker compose logs socialvision
 
 # Check if port is already in use
 lsof -i :8501
@@ -238,7 +242,7 @@ ports:
 **Solutions:**
 ```bash
 # Check container status
-docker-compose ps
+docker compose ps
 
 # Check if port is exposed
 docker port socialvision-app
@@ -301,32 +305,32 @@ docker inspect --format='{{.State.Health.Status}}' socialvision-app
 
 ```bash
 # All logs
-docker-compose logs
+docker compose logs
 
 # Last 100 lines
-docker-compose logs --tail=100
+docker compose logs --tail=100
 
 # Follow logs
-docker-compose logs -f
+docker compose logs -f
 
 # Specific service logs
-docker-compose logs socialvision
+docker compose logs socialvision
 ```
 
 ### Access Container Shell
 
 ```bash
 # Execute command in container
-docker-compose exec socialvision bash
+docker compose exec socialvision bash
 
 # Check Python version
-docker-compose exec socialvision python --version
+docker compose exec socialvision python --version
 
 # Check installed packages
-docker-compose exec socialvision pip list
+docker compose exec socialvision pip list
 
 # Check database file
-docker-compose exec socialvision ls -la /app/data/
+docker compose exec socialvision ls -la /app/data/
 ```
 
 ---
@@ -337,35 +341,35 @@ docker-compose exec socialvision ls -la /app/data/
 
 ```bash
 # Build only
-docker-compose build
+docker compose build
 
 # Build and start
-docker-compose up --build
+docker compose up --build
 
 # Start in background
-docker-compose up -d
+docker compose up -d
 
 # Stop
-docker-compose down
+docker compose down
 
 # Stop and remove volumes
-docker-compose down -v
+docker compose down -v
 
 # Restart
-docker-compose restart
+docker compose restart
 ```
 
 ### Debugging
 
 ```bash
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Execute shell in container
-docker-compose exec socialvision bash
+docker compose exec socialvision bash
 
 # Check container status
-docker-compose ps
+docker compose ps
 
 # Inspect container
 docker inspect socialvision-app
@@ -375,13 +379,13 @@ docker inspect socialvision-app
 
 ```bash
 # Remove containers
-docker-compose down
+docker compose down
 
 # Remove containers and volumes
-docker-compose down -v
+docker compose down -v
 
 # Remove images
-docker-compose down --rmi all
+docker compose down --rmi all
 
 # Full cleanup
 docker system prune -a
@@ -404,7 +408,7 @@ The following directories are mounted as volumes:
 
 ```bash
 # Backup database
-docker-compose exec socialvision cp /app/data/faces_database.json /app/data/backup_$(date +%Y%m%d).json
+docker compose exec socialvision cp /app/data/faces_database.json /app/data/backup_$(date +%Y%m%d).json
 
 # Copy from container to host
 docker cp socialvision-app:/app/data/faces_database.json ./backup/
@@ -476,6 +480,7 @@ Create a `.env` file:
 DEBUG=False
 LOG_LEVEL=INFO
 STREAMLIT_SERVER_PORT=8501
+DB_TYPE=local
 FIREBASE_ENABLED=False
 ```
 
@@ -506,12 +511,12 @@ deploy:
 
 If you encounter issues:
 
-1. Check logs: `docker-compose logs`
+1. Check logs: `docker compose logs`
 2. Review this guide
 3. Check [TESTING_GUIDE.md](TESTING_GUIDE.md)
 4. Contact: mtabdevt@gmail.com
 
 ---
 
-*Last Updated: December 2024*
+*Last Updated: January 2026*
 

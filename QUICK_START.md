@@ -48,6 +48,9 @@ http://localhost:8501
    - Click "🔍 Search"
    - See the results!
 
+   Tip:
+   - You can also switch the search input to **Video upload** (samples frames) or **Live camera** (WebRTC when available; otherwise capture-based mode).
+
 3. **View Analytics:**
    - Go to "📈 Analytics" tab
    - See database statistics
@@ -68,9 +71,17 @@ docker compose restart
 docker compose ps
 ```
 
-### Prefer IBM MAX Upscaling (Optional Locally, Enabled in Docker)
+### IBM MAX Upscaling (Optional; Disabled by Default in Compose)
 
-`docker compose up` now starts the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) sidecar (`ibm-max`) automatically and wires `socialvision-app` to it (`IBM_MAX_URL=http://ibm-max:5000`). If `localhost:5000` is already in use, set `IBM_MAX_HOST_PORT` (defaults to `5100`) before running Compose to pick any free port. Apple Silicon hosts should keep `IBM_MAX_PLATFORM=linux/amd64` (the default) so Docker Desktop spins up the x86 image via QEMU; install Rosetta when prompted. For manual/local runs, export the same variables to prefer MAX before the Real-ESRGAN fallbacks:
+The repo includes optional wiring for the [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer), but the default `docker-compose.yml` ships with IBM MAX **disabled** (and the `ibm-max` service commented out) because the upstream image is **x86-only** and often fails on Apple Silicon.
+
+To enable IBM MAX on an x86 host:
+
+1. Uncomment the `ibm-max` service in `docker-compose.yml`.
+2. Set `IBM_MAX_ENABLED=true` (in `.env` or as an environment override).
+3. Keep `IBM_MAX_URL=http://ibm-max:5000` (the compose network hostname).
+
+For manual/local (non-Docker) runs, export the same variables to prefer MAX before the Real-ESRGAN fallbacks:
 
 ```bash
 export IBM_MAX_ENABLED=true
@@ -80,7 +91,7 @@ export IBM_MAX_TIMEOUT=180
 export IBM_MAX_PLATFORM=linux/amd64
 ```
 
-> **Apple Silicon tip:** The IBM MAX image is Intel-only. If `ibm-max` keeps restarting with `Illegal instruction`, run `docker compose up -d socialvision` (skipping the sidecar) or set `IBM_MAX_ENABLED=false` so the app immediately falls back to the Real-ESRGAN stack, which now auto-tiles even on CPU-only Docker Desktop. You can still point `IBM_MAX_URL` at a remote MAX instance hosted on an x86 VM if you need IBM-grade previews.
+> **Apple Silicon tip:** If IBM MAX crash-loops with `Illegal instruction`, keep `IBM_MAX_ENABLED=false` and rely on the built-in Real-ESRGAN/OpenCV/Lanczos pipeline.
 
 If the microservice is temporarily unreachable, set `IBM_MAX_FAILURE_THRESHOLD=1` so the Streamlit process disables IBM MAX after the first failure and immediately jumps to the Real-ESRGAN stack. Leave `IBM_MAX_PROBE_ON_START=true` (default) so the app pings `/model/metadata` once at boot; if the local container is already crash-looping, IBM MAX will be disabled before the first upload. Set it to `false` only when you intentionally rely on a remote endpoint that might take extra time to come online.
 
@@ -190,5 +201,5 @@ pip install --upgrade -r requirements.txt
 
 ---
 
-Last Updated: December 2025 (Real-ESRGAN tiling + Firestore defaults)
+Last Updated: January 2026 (video/live camera + multi-backend DB + staged Docker installs)
 

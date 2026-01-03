@@ -1,6 +1,6 @@
 # SocialVision Project Status
 
-**Last updated:** December 2025 (mode-agnostic matching + delta embedding uploads)  
+**Last updated:** January 2026 (video/live inputs + multi-backend DB)  
 **Current phase:** Phase 5 – Cloud Persistence & Operational Hardening  
 **Overall completion:** ~78%
 
@@ -16,6 +16,7 @@ SocialVision now delivers a working demo stack that extracts dual embeddings (De
 - Docker build uses BuildKit pip caching and pre-fetches DeepFace weights, shrinking rebuilds by ~60%.
 - Real-ESRGAN is now the default super-resolution backend with configurable minimum trigger scale, pass count, and per-frame tile targeting (`IMAGE_UPSCALING_TARGET_TILES` keeps ~25 tiles even on CPU Docker). IBM MAX and the NCNN CLI remain optional accelerators.
 - Mode-agnostic matching: both fast (dlib) and deep (DeepFace) searches compare against the same DB safely (no 128 vs 512 crashes).
+- Video upload search supports frame sampling and per-username aggregation.
 - Firebase Realtime Database persistence was redesigned to avoid “request too large”: writes are incremental, and enrichment prefers **delta-only embedding patches**.
 - Live-camera fast mode now persists enrichment reliably via background batching and patch-only fallbacks when DeepFace vectors are unavailable.
 - Documentation overhaul (README + capabilities + status) brings parity with established OSS projects.

@@ -51,7 +51,7 @@ services:
       - STREAMLIT_LOGGER_LEVEL=info
       # DB configuration is sourced from `.env` (env_file) so Docker and local
       # runs behave the same. Recommended: DB_TYPE=firebase for
-      # Firestore -> Realtime DB -> local fallback.
+      # Realtime DB -> Firestore -> local fallback.
       # Force Realtime DB to avoid Firestore free-tier read quota exhaustion.
       - DB_TYPE=realtime
       # Optional: seed Realtime DB once from local JSON when RTDB root is empty.

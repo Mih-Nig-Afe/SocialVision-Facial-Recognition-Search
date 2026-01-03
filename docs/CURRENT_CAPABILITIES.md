@@ -1,7 +1,7 @@
 # SocialVision Current Capabilities
 
 **Version:** 1.0.0  
-**Last Updated:** December 2025 (mode-agnostic matching + delta embedding uploads)  
+**Last Updated:** January 2026 (video/live inputs + fast mode + multi-backend DB)  
 **Audience:** Engineers, QA, demo facilitators
 
 ---
@@ -11,10 +11,12 @@
 - **Dual Embedding Bundles:** Faces can store DeepFace (Facenet512) and/or dlib encodings side-by-side.
 - **Mode-Agnostic Matching:** Searches compare against the full DB regardless of extraction mode, using only compatible embedding keys and dimensions (prevents 128 vs 512 crashes).
 - **Delta-Only Enrichment:** When a face is recognized confidently, the system enriches that identity by **adding only missing embedding keys (“dimensions”)** instead of re-uploading existing vectors.
+- **Video + Live Camera Inputs:** Search and Add workflows support image uploads, sampled video frames, and live camera capture (WebRTC when available; capture-based mode otherwise).
+- **Fast / Ultra-Fast Recognition:** A dlib (128-d) fast mode exists for responsiveness, with optional in-memory caching for ultra-fast searches.
 - **High-Detail Preprocessing:** Native Real-ESRGAN is now the default super-resolution backend with configurable pass counts, minimum trigger scale, and per-frame tile targeting (e.g., force ~25 tiles). When IBM MAX or the NCNN CLI are available they slot ahead of OpenCV/Lanczos, but CPU-only Docker automatically clamps Real-ESRGAN to a single 4× pass to stay responsive.
 - **Search Pathways:** Rank results per face, aggregate matches by username, enrich identities by appending fresh embeddings post-match.
 - **Self-Training Profiles:** Confident matches write back enrichment metadata (origin, trigger similarity, batch size) so identities improve over time.
-- **Operational Tooling:** Streamlit tri-tab UI, Docker build with pip cache mount, DeepFace weight prefetch, JSON database auto-versioning.
+- **Operational Tooling:** Streamlit operator console, Docker build designed for reproducible installs (staged dependency installs + layer caching), DeepFace weight prefetch, JSON database auto-versioning.
 - **Quality Baseline:** Pytest suites cover engine/database/search; Streamlit workflows rely on the same API contracts.
 
 ---
@@ -32,6 +34,9 @@
 | Image upscaling | ✅ | Real-ESRGAN-first pipeline with configurable minimum trigger scale, max passes, target tile count, and CPU-aware clamps; IBM MAX and the NCNN CLI remain optional accelerators ahead of OpenCV/Lanczos. |
 | Firebase Realtime DB integration | ✅ | Incremental writes + delta embedding patches to avoid oversized payloads; JSON store remains for offline-only demos. |
 | Firestore integration | ✅ | Available as an alternative backend; JSON store remains for offline-only demos. |
+| Video upload search | ✅ | Samples frames (`VIDEO_FRAME_STRIDE`, `VIDEO_MAX_FRAMES`) and aggregates matches per username. |
+| Live camera recognition | ✅ | WebRTC when available outside Docker; capture-based mode as fallback. |
+| Fast mode search | ✅ | dlib 128-d search path with optional upscale retry and detailed (512-d) fallback when needed. |
 | Batch processing | ✅ | `FaceRecognitionEngine.batch_process_images` for offline ingestion. |
 | Dockerized runtime | ✅ | BuildKit cache for TensorFlow, DeepFace weight caching, health checks. |
 | Testing | ✅ | `tests/` suites covering engine, DB, search flows. |
@@ -132,7 +137,7 @@ Manual smoke tests:
 - `NCNN_UPSCALING_ENABLED`, `NCNN_EXEC_PATH`, `NCNN_MODEL_NAME` configure the Real-ESRGAN NCNN Vulkan fallback.
 - `DB_TYPE=firestore` switches the database driver from JSON to Firestore.
 - `DB_TYPE=realtime` switches the database driver from JSON to Firebase Realtime Database.
-- `DB_TYPE=firebase` prefers Firestore and falls back to Realtime Database.
+- `DB_TYPE=firebase` prefers Firebase Realtime Database and falls back to Firestore (then local JSON).
 
 See `src/config.py` for the full catalog.
 
@@ -152,5 +157,5 @@ Questions go to Mihretab N. Afework · <mtabdevt@gmail.com>.
 
 ---
 
-Last updated: December 2025
+Last updated: January 2026
 

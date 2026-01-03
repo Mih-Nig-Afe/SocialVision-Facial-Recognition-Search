@@ -114,7 +114,7 @@ Features of the container image:
 - Pre-fetch of DeepFace weights during build, reducing cold-start latency.
 - Health check hitting `/_stcore/health` to signal readiness.
 - Real-ESRGAN weights baked into `models/` plus environment-driven tiling so Docker-on-Mac users can force ~25 tiles per frame without editing code.
-- Optional [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) sidecar running as `ibm-max`, with `socialvision-app` wired to call it automatically (`IBM_MAX_URL=http://ibm-max:5000`). Override the exposed host port via `IBM_MAX_HOST_PORT` (defaults to `5100`) if something else already listens on `localhost:5000`, and override the image architecture with `IBM_MAX_PLATFORM` (defaults to `linux/amd64`) when running on Apple Silicon via emulation.
+- Optional [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) sidecar (`ibm-max`). The shipped `docker-compose.yml` keeps it commented out and `IBM_MAX_ENABLED=false` by default; enable it on x86 hosts if you want IBM MAX ahead of the Real-ESRGAN/OpenCV/Lanczos fallback chain.
 
 Access the UI at `http://localhost:8501`.
 
@@ -164,15 +164,14 @@ Key environment variables (see `src/config.py` for defaults):
 | `IMAGE_UPSCALING_MAX_PASSES` | Maximum number of Real-ESRGAN passes to chain (default `2`) before falling back to OpenCV/Lanczos, keeping RAM usage predictable. |
 | `IMAGE_UPSCALING_TARGET_TILES` | Desired number of Real-ESRGAN tiles per frame (default `0`, meaning “use the configured tile size”). Set to `25` to force roughly a 5×5 grid so that every image benefits from tiled inference, even on CPU-only Docker. |
 | `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE` | Smallest requested upscale factor that still triggers Real-ESRGAN (default `1.05`). Set to `1.0` to always run the AI upscaler even for near-1× touch-ups, or raise it if you prefer to skip Real-ESRGAN for tiny adjustments. |
-| `IMAGE_EAGER_PREUPSCALE` | `true` forces every uploaded image through the upscaler before detection; default `false` so only the retry path performs heavy upscaling. |
-| `IBM_MAX_ENABLED` / `IBM_MAX_URL` / `IBM_MAX_TIMEOUT` | Toggle the IBM MAX Image Resolution Enhancer client, set its base URL, and override HTTP timeout (defaults: disabled, 120s). |
+| `IBM_MAX_ENABLED` / `IBM_MAX_URL` / `IBM_MAX_TIMEOUT` | Toggle the IBM MAX Image Resolution Enhancer client, set its base URL, and override HTTP timeout. Note: `docker-compose.yml` disables IBM MAX by default for portability; `.env.example` shows an opt-in configuration. |
 | `IBM_MAX_HOST_PORT` | Host-side port that exposes the IBM MAX health/API endpoint (default `5100`); useful when `localhost:5000` is already reserved. |
 | `IBM_MAX_PLATFORM` | Docker platform string passed to the IBM MAX service (default `linux/amd64`); set to `linux/amd64` on Apple Silicon so QEMU emulation runs the upstream image. |
 | `IBM_MAX_FAILURE_THRESHOLD` | Number of consecutive IBM MAX call failures allowed before the client auto-disables for the session (default `3`). |
-| `IBM_MAX_PROBE_ON_START` | `true` probes `/model/metadata` on startup and disables IBM MAX immediately if the local sidecar cannot be reached (default `true`). |
+| `IBM_MAX_PROBE_ON_START` | `true` probes `/model/metadata` on startup and disables IBM MAX immediately if the endpoint cannot be reached (code default `false`). |
 | `NCNN_UPSCALING_ENABLED` / `NCNN_EXEC_PATH` / `NCNN_MODEL_NAME` | Configure the standalone Real-ESRGAN NCNN Vulkan executable path, model, and tiling so it can act as the next fallback when IBM MAX is unavailable. |
 | `LOCAL_DB_PATH` | Path to JSON database (default `data/faces_database.json`). |
-| `DB_TYPE` | `local`, `firestore`, `realtime`, or `firebase` (Firestore preferred → Realtime fallback → local fallback); controls which backend `FaceDatabase` instantiates. |
+| `DB_TYPE` | `local`, `firestore`, `realtime`, or `firebase` (Realtime preferred → Firestore fallback → local fallback); controls which backend `FaceDatabase` instantiates. |
 | `FIREBASE_DATABASE_URL` | Realtime Database URL (e.g. `https://<project>.firebaseio.com`). |
 | `FIREBASE_DB_ROOT` | Realtime Database root path (default `faces_database`). |
 | `REALTIME_DELTA_EMBEDDINGS` | When `true` (default), Realtime DB writes patch only missing embedding keys instead of re-uploading whole records. |
