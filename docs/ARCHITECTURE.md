@@ -22,78 +22,53 @@ This document focuses on **runtime architecture**, **data flow**, and **how proc
 
 ## System Context (High-Level)
 
-If your Markdown viewer does not render Mermaid diagrams, scroll to **Always-Visible Diagrams (ASCII)** below.
-
 ```mermaid
-flowchart LR
-  User((Operator)) -->|Browser| StreamlitUI[Streamlit UI\nSearch / Add Faces / Analytics]
-  StreamlitUI --> Pipeline[Pipeline + SearchEngine\n(face detection, embedding, search, enrichment)]
+classDiagram
+  class Operator
+  class StreamlitUI {
+    +Search
+    +Add Faces
+    +Analytics
+  }
 
-  Pipeline --> Upscaler[Image Upscaler\nReal-ESRGAN / Optional IBM MAX / Fallbacks]
-  Pipeline --> FaceEngine[FaceRecognitionEngine\nDeepFace + dlib]
-  Pipeline --> DB[FaceDatabase\nlocal JSON / Realtime DB / Firestore]
+  class Pipeline_SearchEngine {
+    +detect
+    +embed
+    +search
+    +enrich_delta_only
+  }
 
-  DB --> LocalJSON[(data/faces_database.json)]
-  DB --> RTDB[(Firebase Realtime DB)]
-  DB --> Firestore[(Google Firestore)]
+  class ImageUpscaler {
+    +RealESRGAN
+    +OptionalIBMMax
+    +Fallbacks
+  }
 
-  Pipeline --> Logs[(logs/)]
-```
+  class FaceRecognitionEngine {
+    +DeepFace512d
+    +Dlib128d
+  }
 
----
+  class FaceDatabase {
+    +LocalJSON
+    +RealtimeDB
+    +Firestore
+  }
 
-## Always-Visible Diagrams (ASCII)
+  class LocalJSON
+  class RealtimeDB
+  class Firestore
+  class Logs
 
-### A) System Context (what talks to what)
-
-```text
-  +-----------+        +-------------------+        +-----------------------------+
-  | Operator  | -----> | Streamlit UI      | -----> | Pipeline / SearchEngine     |
-  | (browser) |        | (Search/Add/Stat) |        | (orchestration + logic)     |
-  +-----------+        +-------------------+        +-----------------------------+
-                                                      |      |           |
-                                                      |      |           |
-                                                      v      v           v
-                                            +--------------+  +---------------------+  +------------------+
-                                            | ImageUpscaler|  | FaceRecognitionEngine|  | FaceDatabase      |
-                                            | (Real-ESRGAN |  | (DeepFace + dlib)    |  | (local/RTDB/FS)   |
-                                            |  optional MAX|  +---------------------+  +------------------+
-                                            |  fallbacks)  |                           |   |     |     |
-                                            +--------------+                           v   v     v     v
-                                                                                      JSON RTDB Firestore Logs
-```
-
-### B) Database selection (DB_TYPE)
-
-```text
-DB_TYPE=local      -> local JSON
-DB_TYPE=realtime   -> Firebase Realtime Database
-DB_TYPE=firestore  -> Firestore
-
-DB_TYPE=firebase auto-mode:
-
-  [Try Realtime DB] --ok--> use RTDB
-        |
-        no
-        v
-  [Try Firestore]   --ok--> use Firestore
-        |
-        no
-        v
-  [Fallback]              use local JSON
-```
-
-### C) Sequence: image search (happy path)
-
-```text
-Operator -> UI : upload image + Search
-UI -> Pipeline/SearchEngine : search_by_image
-Pipeline -> Upscaler : maybe_upscale
-Pipeline -> FaceRecognitionEngine : detect_faces + extract_embeddings
-Pipeline -> FaceDatabase : search_similar_faces
-Pipeline -> Pipeline : aggregate results by username
-Pipeline -> FaceDatabase : optional delta-only enrich on confident match
-Pipeline -> UI : results + telemetry
+  Operator --> StreamlitUI : uses
+  StreamlitUI --> Pipeline_SearchEngine : calls
+  Pipeline_SearchEngine --> ImageUpscaler : optional
+  Pipeline_SearchEngine --> FaceRecognitionEngine : detect/embed
+  Pipeline_SearchEngine --> FaceDatabase : read/write
+  FaceDatabase --> LocalJSON
+  FaceDatabase --> RealtimeDB
+  FaceDatabase --> Firestore
+  Pipeline_SearchEngine --> Logs
 ```
 
 ---
@@ -256,12 +231,18 @@ SocialVision’s `FaceDatabase` supports multiple backends.
 - `DB_TYPE=firebase`: auto-mode with fallback order:
 
 ```mermaid
-flowchart TD
-  A[DB_TYPE=firebase] --> B{Realtime DB available?}
-  B -- yes --> RT[Use Firebase Realtime DB]
-  B -- no --> C{Firestore available?}
-  C -- yes --> FS[Use Firestore]
-  C -- no --> L[Fallback to local JSON]
+stateDiagram-v2
+  [*] --> RealtimeCheck
+
+  RealtimeCheck --> RealtimeDB: available
+  RealtimeCheck --> FirestoreCheck: unavailable
+
+  FirestoreCheck --> Firestore: available
+  FirestoreCheck --> LocalJSON: unavailable
+
+  RealtimeDB --> [*]
+  Firestore --> [*]
+  LocalJSON --> [*]
 ```
 
 ---

@@ -43,6 +43,8 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 
 ## Architecture
 
+For full UML-style diagrams (system context, sequences, DB backend selection), see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
 ```text
         +---------------------------+
         |        Streamlit UI       |
@@ -243,6 +245,7 @@ With `DB_TYPE=realtime` (or `DB_TYPE=firebase` when Realtime DB is available), w
 ## Documentation Map
 
 - **[docs/README.md](docs/README.md)** – navigation hub.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** – UML diagrams + end-to-end processing flows.
 - **[docs/CURRENT_CAPABILITIES.md](docs/CURRENT_CAPABILITIES.md)** – quick reference for what works today.
 - **[docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** – phase progress, KPIs, and blocking issues.
 - **[docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md)** – manual + automated test instructions.
