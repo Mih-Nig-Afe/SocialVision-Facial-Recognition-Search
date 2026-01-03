@@ -45,27 +45,38 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 
 For full UML-style diagrams (system context, sequences, DB backend selection), see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
-```text
-        +---------------------------+
-        |        Streamlit UI       |
-        |  Search / Add / Analytics |
-        +-------------+-------------+
-                      |
-                      v
-        +-------------+-------------+
-        |     SearchEngine API      |
-        | - Enrichment workflows    |
-        | - Threshold controls      |
-        +------+------+-------------+
-               |      |
-     +---------+      +---------+
-     v                          v
-FaceRecognitionEngine     FaceDatabase
-(DeepFace + dlib)         (JSON + metadata cache)
-     |                          |
-     v                          v
- DeepFace cache        data/faces_database.json
- dlib (face_recognition)
+```mermaid
+classDiagram
+    class StreamlitUI {
+        +Search
+        +AddFaces
+        +Analytics
+    }
+
+    class SearchEngine {
+        +search_by_image()
+        +aggregate_by_username()
+        +auto_enrich_identity()
+    }
+
+    class FaceRecognitionEngine {
+        +detect_faces()
+        +extract_embeddings()
+        +DeepFace512d
+        +Dlib128d
+    }
+
+    class FaceDatabase {
+        +add_face()
+        +search_similar_faces()
+        +LocalJSON
+        +RealtimeDB
+        +Firestore
+    }
+
+    StreamlitUI --> SearchEngine
+    SearchEngine --> FaceRecognitionEngine
+    SearchEngine --> FaceDatabase
 ```
 
 - **Detection/Embedding**: `FaceRecognitionEngine` first attempts DeepFace (Facenet512) and, based on config, also runs dlib encoders. Embeddings are normalized, bundled, and tagged per backend (`{"deepface": [...], "dlib": [...]}`).
