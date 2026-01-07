@@ -1,4 +1,4 @@
-# SocialVision: Advanced Facial Recognition Search Engine
+# SocialVision — Intelligent Facial Recognition Search Engine
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.39+-red.svg)](https://streamlit.io)
@@ -7,7 +7,13 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ed.svg)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-SocialVision is an academic research project that builds an end‑to‑end facial recognition search engine for operator-curated visual datasets. The stack combines **DeepFace (TensorFlow/Keras)** embeddings with **dlib/face_recognition** encodings, stores both vectors per face, and exposes the experience through a Streamlit UI plus multiple persistence backends (local JSON, Firebase Realtime Database, Firestore).
+SocialVision is an **intelligent facial recognition and identity search system** designed for real-time face detection, verification, and similarity-based identity retrieval across operator-curated visual datasets.
+
+The project implements an **end-to-end computer vision and deep learning pipeline**, combining **DeepFace (Facenet512, TensorFlow/Keras)** embeddings with **dlib / face_recognition** encodings. These dual embeddings are fused per detected face to improve robustness, confidence scoring, and real-world reliability.
+
+SocialVision supports **automatic dataset enrichment, self-training identity profiles, and adaptive learning workflows**, allowing the system to continuously improve recognition accuracy as new faces are searched and verified. The platform is exposed through a **Streamlit-based command interface**, backed by a local JSON or Firestore database, Dockerized operations, and automated tests to ensure reproducibility and research-grade quality.
+
+> **Positioning:** Research-grade facial recognition system demonstrating real-world AI pipelines, adaptive learning, and scalable computer vision architectures.
 
 > **Maintainer**: Mihretab N. Afework ([@Mih-Nig-Afe](https://github.com/Mih-Nig-Afe)) · <mtabdevt@gmail.com>
 
@@ -31,7 +37,7 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 | Area | Highlights |
 |------|------------|
 | **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, and safe handling of mixed dimensions (e.g. 128 vs 512). |
-| **Face Search Engine** | Mode-agnostic matching: whatever extraction mode is used, search compares against the whole DB using compatible embedding keys and dimensions. |
+| **Facial Recognition Search Engine** | Mode-agnostic matching: whatever extraction mode is used, search compares against the whole DB using compatible embedding keys and dimensions. |
 | **Self-Training Profiles** | Confident matches trigger enrichment that **adds only missing embedding keys (“dimensions”)** for that identity instead of re-uploading everything. |
 | **Input Modes** | Image upload, video upload (frame sampling), and live camera. Live camera runs via WebRTC when available; a capture-based fallback exists for environments without WebRTC support. |
 | **Face Quality Gate** | Optional face quality scoring (blur/brightness/contrast/sharpness) plus auto-improvement (CLAHE/denoise/sharpen) before adding/enriching faces. |
@@ -311,6 +317,10 @@ pytest tests/test_search_engine.py -v
 All three suites are CI-friendly and cover the dual-embedding engine, bundle-aware database, and enrichment logic.
 
 ---
+
+## Keywords & Domains
+
+facial recognition · computer vision · deep learning · machine learning · identity verification · face detection · biometric systems · AI pipelines · self-training systems · adaptive learning · real-time vision · dataset enrichment · Python · OpenCV · DeepFace · Streamlit
 
 ## Roadmap & Contributing
 
