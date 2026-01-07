@@ -3,7 +3,7 @@ Search engine for finding similar faces
 """
 
 import numpy as np
-from typing import List, Dict, Optional, Any, Tuple
+from typing import Iterable, List, Dict, Optional, Any, Tuple
 from src.logger import setup_logger
 from src.database import FaceDatabase
 from src.face_recognition_engine import FaceRecognitionEngine
@@ -222,10 +222,73 @@ class SearchEngine:
         image: np.ndarray,
         threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         top_k: int = 50,
+        skip_upscale: bool = False,
+        fast_mode: bool = False,
     ) -> Dict:
-        """Search for similar faces, retrying with an aggressively upscaled frame if necessary."""
+        """Search for similar faces, optionally retrying with upscaled frame.
+
+        Args:
+            image: Input image as numpy array
+            threshold: Similarity threshold for matches
+            top_k: Maximum number of results to return
+            skip_upscale: If True, skip upscaling retry for faster processing
+        """
 
         try:
+            if fast_mode:
+                base_shape = self._shape_from_image(image)
+
+                # 1) Fast pass (128-d, ultra-fast cache when available)
+                primary_fast = self._execute_fast_search_pass(
+                    image=image,
+                    threshold=threshold,
+                    top_k=top_k,
+                )
+                if primary_fast.get("total_matches", 0) > 0:
+                    return primary_fast
+
+                # 2) If no match, upscale + fast retry (upload path). Keep this
+                # disabled for real-time scenarios via skip_upscale=True.
+                if not skip_upscale:
+                    retry_reason = self._should_retry_with_upscale(primary_fast)
+                    if retry_reason:
+                        enhanced, backend_used = self._run_retry_backends(image)
+                        if enhanced is not None:
+                            fast_retry = self._execute_fast_search_pass(
+                                image=enhanced,
+                                threshold=threshold,
+                                top_k=top_k,
+                            )
+                            fast_retry.setdefault("diagnostics", {})[
+                                "retry_reason"
+                            ] = retry_reason
+                            fast_retry["diagnostics"][
+                                "retry_minimum_outscale"
+                            ] = UPSCALE_RETRY_MIN_OUTSCALE
+                            fast_retry["diagnostics"]["retry_backend"] = backend_used
+                            fast_retry["diagnostics"][
+                                "context"
+                            ] = "fast_dlib_upscaled_retry"
+                            fast_retry["fallback_used"] = True
+
+                            if fast_retry.get("total_matches", 0) > 0:
+                                return fast_retry
+
+                # 3) Still no matches: switch to detailed (512-d DeepFace) search.
+                # We do not force another upscale retry here because we already tried it.
+                detailed_fallback = self._execute_search_pass(
+                    image=image,
+                    threshold=threshold,
+                    top_k=top_k,
+                    context="fallback_512",
+                    report_shape=base_shape,
+                )
+                detailed_fallback["fallback_used"] = True
+                detailed_fallback.setdefault("diagnostics", {})[
+                    "fallback_from"
+                ] = "fast_mode"
+                return detailed_fallback
+
             base_shape = self._shape_from_image(image)
             primary = self._execute_search_pass(
                 image=image,
@@ -235,22 +298,331 @@ class SearchEngine:
                 report_shape=base_shape,
             )
 
-            retry_reason = self._should_retry_with_upscale(primary)
-            if retry_reason:
-                fallback = self._try_upscaled_retry(
-                    image=image,
-                    threshold=threshold,
-                    top_k=top_k,
-                    report_shape=base_shape,
-                    reason=retry_reason,
-                )
-                if fallback:
-                    return fallback
+            # Skip upscale retry if requested (for real-time processing)
+            if not skip_upscale:
+                retry_reason = self._should_retry_with_upscale(primary)
+                if retry_reason:
+                    fallback = self._try_upscaled_retry(
+                        image=image,
+                        threshold=threshold,
+                        top_k=top_k,
+                        report_shape=base_shape,
+                        reason=retry_reason,
+                    )
+                    if fallback:
+                        return fallback
 
             return primary
         except Exception as e:
             logger.error(f"Error searching by image: {e}", exc_info=True)
             return {"faces": [], "total_matches": 0}
+
+    def _execute_fast_search_pass(
+        self,
+        image: np.ndarray,
+        threshold: float,
+        top_k: int,
+    ) -> Dict:
+        """Fast search path: dlib (128-d) embeddings + direct DB search.
+
+        Uses OpenCV Haar detection + face_recognition encodings. Designed for
+        responsiveness on CPU, and avoids expensive upscaling retries.
+        """
+
+        try:
+            from src.fast_recognition import (
+                fast_detect_faces,
+                fast_extract_embedding,
+                ultra_fast_search,
+            )
+        except Exception as exc:
+            logger.warning("Fast search unavailable; falling back to detailed: %s", exc)
+            return self._execute_search_pass(
+                image=image,
+                threshold=threshold,
+                top_k=top_k,
+                context="original",
+                report_shape=self._shape_from_image(image),
+            )
+
+        face_locations = fast_detect_faces(image, min_size=60, scale_factor=1.2)
+        source_shape = self._shape_from_image(image)
+
+        results: Dict[str, Any] = {"faces": [], "total_matches": 0}
+        if not face_locations:
+            results["diagnostics"] = {
+                "context": "fast_dlib",
+                "faces_detected": 0,
+                "embeddings_extracted": 0,
+                "source_shape": (
+                    self._shape_dict(source_shape) if source_shape else None
+                ),
+            }
+            results["fallback_used"] = False
+            results["suggest_add_face"] = False
+            return results
+
+        embeddings_extracted = 0
+        pending_enrich: Dict[str, List[Dict[str, List[float]]]] = {}
+        face_usernames: List[Optional[str]] = []
+        face_payloads: List[Dict[str, Any]] = []
+        for i, location in enumerate(face_locations):
+            emb = fast_extract_embedding(image, location)
+            enrichment_summary = None
+            username_for_face: Optional[str] = None
+
+            if emb is None:
+                face_results = []
+            else:
+                embeddings_extracted += 1
+                # Prefer ultra-fast cached search (same path as live cam).
+                face_results = ultra_fast_search(
+                    emb,
+                    self.database,
+                    threshold=threshold,
+                    limit=top_k,
+                )
+
+                # Normalize result schema.
+                for item in face_results:
+                    if "similarity_score" not in item and "similarity" in item:
+                        item["similarity_score"] = item.get("similarity")
+
+                # Fallback: dlib-only DB scan when cache yields nothing.
+                if not face_results:
+                    face_results = self.search_by_embedding(
+                        {"dlib": emb},
+                        threshold=threshold,
+                        top_k=top_k,
+                    )
+
+                if face_results:
+                    top_match = face_results[0]
+                    username_for_face = top_match.get("username")
+
+                    # Enrich DB with *both* embedding types when possible.
+                    # This keeps future searches mode-agnostic (fast/detailed/live).
+                    enrich_bundle: Dict[str, Any] = {"dlib": emb}
+                    try:
+                        # Only compute DeepFace after we have a match (keeps fast path fast).
+                        from src.fast_recognition import (
+                            _extract_deepface_embedding_only,
+                        )
+
+                        deepface_bundle = _extract_deepface_embedding_only(
+                            image, location
+                        )
+                        if (
+                            isinstance(deepface_bundle, dict)
+                            and deepface_bundle.get("deepface") is not None
+                        ):
+                            enrich_bundle.update(deepface_bundle)
+                    except Exception:
+                        deepface_bundle = None
+
+                    serialized = self._serialize_embedding_bundle(enrich_bundle)
+
+                    # If DeepFace extraction wasn't available, avoid creating new dlib-only
+                    # records when the user already has dlib vectors (prevents mixed-dim primaries).
+                    if username_for_face and serialized:
+                        if "deepface" not in serialized:
+                            try:
+                                existing_faces = self.database.get_faces_by_username(
+                                    username_for_face
+                                )
+                                needs_dlib = any(
+                                    (
+                                        isinstance(f.get("embeddings"), dict)
+                                        and "dlib" not in f.get("embeddings", {})
+                                    )
+                                    for f in existing_faces
+                                )
+                                if not needs_dlib:
+                                    serialized = None
+                            except Exception:
+                                # If we can't determine, be conservative and skip.
+                                serialized = None
+
+                    if username_for_face and serialized:
+                        pending_enrich.setdefault(username_for_face, []).append(
+                            serialized
+                        )
+                    # Fill after batch flush.
+                    enrichment_summary = None
+
+            face_usernames.append(username_for_face)
+            face_payloads.append(
+                {
+                    "face_index": i,
+                    "location": location,
+                    "matches": face_results,
+                    "enrichment": enrichment_summary,
+                }
+            )
+            results["total_matches"] += len(face_results)
+
+        # Flush enrichment once per username (avoids multiple DB writes).
+        enrichment_summaries: Dict[str, Dict[str, Any]] = {}
+        if pending_enrich:
+            for username, bundles in pending_enrich.items():
+                try:
+                    metadata = {
+                        "origin": "search_enrichment_fast",
+                        "fast_mode": True,
+                        "batch_size": len(bundles),
+                    }
+                    summary = self.database.append_embeddings_to_username(
+                        username,
+                        bundles,
+                        source="search_auto_enrich",
+                        metadata=metadata,
+                    )
+                    summary["username"] = username
+                    enrichment_summaries[username] = summary
+                except Exception as exc:
+                    logger.error(
+                        "Fast-mode auto-enrichment failed for %s: %s",
+                        username,
+                        exc,
+                        exc_info=True,
+                    )
+                    enrichment_summaries[username] = {
+                        "username": username,
+                        "error": str(exc),
+                    }
+
+        # Attach per-face enrichment.
+        for idx, payload in enumerate(face_payloads):
+            username = face_usernames[idx] if idx < len(face_usernames) else None
+            if username:
+                payload["enrichment"] = enrichment_summaries.get(username)
+            results["faces"].append(payload)
+
+        results["diagnostics"] = {
+            "context": "fast_dlib",
+            "faces_detected": len(face_locations),
+            "embeddings_extracted": embeddings_extracted,
+        }
+        if source_shape:
+            results["diagnostics"]["source_shape"] = self._shape_dict(source_shape)
+
+        results["fallback_used"] = False
+        results["suggest_add_face"] = (
+            embeddings_extracted > 0 and results.get("total_matches", 0) == 0
+        )
+        return results
+
+    def search_video_frames(
+        self,
+        frames: Iterable[np.ndarray],
+        threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+        top_k: int = 50,
+        fast_mode: bool = False,
+    ) -> Dict[str, Any]:
+        """Aggregate search over a sequence of video frames."""
+
+        aggregate: Dict[str, Any] = {
+            "frames_processed": 0,
+            "frames_with_faces": 0,
+            "total_faces_detected": 0,
+            "total_matches": 0,
+            "matches_by_user": [],
+            "frame_summaries": [],
+            "suggest_add_face": False,
+        }
+
+        user_stats: Dict[str, Dict[str, Any]] = {}
+
+        for idx, frame in enumerate(frames):
+            if frame is None:
+                continue
+
+            frame_result = self.search_by_image(
+                frame,
+                threshold=threshold,
+                top_k=top_k,
+                # Even in fast mode, uploads should use upscale retry when needed
+                # (fast -> upscale+fast -> 512) rather than skipping retries.
+                skip_upscale=False,
+                fast_mode=fast_mode,
+            )
+            faces = frame_result.get("faces", [])
+            matches = frame_result.get("total_matches", 0)
+            aggregate["frames_processed"] += 1
+            aggregate["total_faces_detected"] += len(faces)
+            aggregate["total_matches"] += matches
+            if len(faces) > 0:
+                aggregate["frames_with_faces"] += 1
+
+            top_user = None
+            top_similarity = None
+
+            for face in faces:
+                for match in face.get("matches", []):
+                    username = match.get("username")
+                    similarity = match.get("similarity_score")
+                    source = match.get("source")
+                    if username is None:
+                        continue
+
+                    stats = user_stats.setdefault(
+                        username,
+                        {
+                            "username": username,
+                            "match_count": 0,
+                            "similarities": [],
+                            "sources": set(),
+                            "frames": set(),
+                        },
+                    )
+                    stats["match_count"] += 1
+                    if similarity is not None:
+                        stats["similarities"].append(float(similarity))
+                    if source:
+                        stats["sources"].add(source)
+                    stats["frames"].add(idx)
+
+                    if top_similarity is None or (
+                        similarity is not None and similarity > top_similarity
+                    ):
+                        top_similarity = similarity
+                        top_user = username
+
+            aggregate["frame_summaries"].append(
+                {
+                    "frame_index": idx,
+                    "faces_detected": len(faces),
+                    "matches": matches,
+                    "top_username": top_user,
+                    "top_similarity": (
+                        float(top_similarity) if top_similarity is not None else None
+                    ),
+                    "fallback_used": bool(frame_result.get("fallback_used", False)),
+                    "suggest_add_face": bool(
+                        frame_result.get("suggest_add_face", False)
+                    ),
+                }
+            )
+
+            if frame_result.get("suggest_add_face"):
+                aggregate["suggest_add_face"] = True
+
+        if user_stats:
+            for stats in user_stats.values():
+                sims = stats.pop("similarities", [])
+                frames_set = stats.pop("frames", set())
+                sources_set = stats.pop("sources", set())
+                stats["avg_similarity"] = float(np.mean(sims)) if sims else None
+                stats["max_similarity"] = float(max(sims)) if sims else None
+                stats["sources"] = sorted(sources_set)
+                stats["frames"] = sorted(frames_set)
+            aggregate["matches_by_user"] = sorted(
+                user_stats.values(),
+                key=lambda x: (x.get("match_count", 0), x.get("avg_similarity", 0)),
+                reverse=True,
+            )
+
+        return aggregate
 
     def _execute_search_pass(
         self,

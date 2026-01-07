@@ -41,6 +41,7 @@ services:
       - ./logs:/app/logs
       - ./models:/app/models
       - ./config:/app/config
+      - ./.streamlit:/app/.streamlit
       - deepface-cache:/root/.deepface
     environment:
       - PYTHONUNBUFFERED=1
@@ -48,13 +49,19 @@ services:
       - STREAMLIT_SERVER_PORT=8501
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
       - STREAMLIT_LOGGER_LEVEL=info
-      - DB_TYPE=firestore
-      - FIREBASE_ENABLED=true
-      - FIREBASE_PROJECT_ID=face-recognition-122f5
-      - FIRESTORE_COLLECTION_PREFIX=socialvision_
-      - FIRESTORE_DATABASE_ID=(default)
-      - FIRESTORE_LOCATION_ID=us-central
-      - FIREBASE_CONFIG_PATH=/app/config/firebase_config.json
+      # DB configuration is sourced from `.env` (env_file) so Docker and local
+      # runs behave the same. Recommended: DB_TYPE=firebase for
+      # Realtime DB -> Firestore -> local fallback.
+      # Force Realtime DB to avoid Firestore free-tier read quota exhaustion.
+      - DB_TYPE=realtime
+      # Optional: seed Realtime DB once from local JSON when RTDB root is empty.
+      - REALTIME_BOOTSTRAP_FROM_LOCAL=true
+      # Optional: seed Firestore once from local JSON when Firestore is empty.
+      - FIRESTORE_BOOTSTRAP_FROM_LOCAL=true
+      # Reduce Firestore reads from Streamlit reruns.
+      - FIRESTORE_STATS_CACHE_TTL_SECONDS=30
+      # Be tolerant of transient throttling.
+      - FIRESTORE_REST_MAX_RETRIES=8
       # IBM MAX disabled on ARM64/Apple Silicon (enable on x86 systems)
       - IBM_MAX_ENABLED=false
       - IBM_MAX_URL=http://ibm-max:5000
@@ -89,6 +96,30 @@ services:
       timeout: 10s
       retries: 3
       start_period: 90s
+
+  socialvision-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: socialvision-tests
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./config:/app/config
+      - ./.streamlit:/app/.streamlit
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Avoid external service dependencies during test runs.
+      - IBM_MAX_ENABLED=false
+      - DEEPFACE_ENABLED=false
+      - FIREBASE_ENABLED=false
+      - DB_TYPE=local
+    command: ["python", "-m", "pytest", "-q"]
 
 networks:
   socialvision-network:

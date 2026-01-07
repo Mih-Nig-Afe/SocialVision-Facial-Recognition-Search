@@ -4,7 +4,8 @@ Image processing utilities
 
 import numpy as np
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Tuple
+from tempfile import NamedTemporaryFile
+from typing import Callable, Iterable, Iterator, List, Optional, Tuple
 from PIL import Image, ImageDraw
 import io
 from src.logger import setup_logger
@@ -14,6 +15,8 @@ from src.image_upscaler import get_image_upscaler
 logger = setup_logger(__name__)
 config = get_config()
 EAGER_PREUPSCALE = bool(getattr(config, "IMAGE_EAGER_PREUPSCALE", False))
+DEFAULT_VIDEO_FRAME_STRIDE = getattr(config, "VIDEO_FRAME_STRIDE", 5)
+DEFAULT_VIDEO_MAX_FRAMES = getattr(config, "VIDEO_MAX_FRAMES", 90)
 
 # Try to import cv2, but make it optional
 try:
@@ -136,9 +139,22 @@ class ImageProcessor:
         image: np.ndarray,
         max_width: int = 1400,
         max_height: int = 1400,
+        *,
+        enhance: bool = False,
+        minimum_outscale: float = 1.0,
     ) -> np.ndarray:
-        """Resize image before sending to recognition pipeline."""
-        working = ImageProcessor.enhance_image(image) if EAGER_PREUPSCALE else image
+        """Resize image before sending to recognition pipeline.
+
+        Enhancement (super-resolution) is intentionally opt-in because it can be
+        very expensive (e.g., Real-ESRGAN tiling on CPU).
+        """
+
+        working = image
+        if enhance:
+            working = ImageProcessor.enhance_image(
+                working,
+                minimum_outscale=minimum_outscale,
+            )
         return ImageProcessor.resize_image(working, max_width, max_height)
 
     @staticmethod
@@ -152,7 +168,11 @@ class ImageProcessor:
             return image
 
         try:
-            enhanced = upscaler.upscale(image, minimum_outscale=minimum_outscale)
+            try:
+                enhanced = upscaler.upscale(image, minimum_outscale=minimum_outscale)
+            except TypeError:
+                # Back-compat: some test doubles / legacy upscalers only accept (image).
+                enhanced = upscaler.upscale(image)
             backend = getattr(upscaler, "last_backend", "unknown")
             logger.info("Image enhanced via %s backend", backend)
             return enhanced
@@ -490,3 +510,136 @@ class ImageProcessor:
         }
         normalized = mapping.get(extension.lower(), extension.upper())
         return normalized or "JPEG"
+
+
+class VideoProcessor:
+    """Video decoding and frame sampling utilities."""
+
+    @staticmethod
+    def _validate_video_extension(path: Path) -> bool:
+        ext = path.suffix.lower().lstrip(".")
+        return ext in getattr(config, "ALLOWED_VIDEO_FORMATS", set())
+
+    @staticmethod
+    def iterate_frames_from_file(
+        video_path: str,
+        frame_stride: int = DEFAULT_VIDEO_FRAME_STRIDE,
+        max_frames: int = DEFAULT_VIDEO_MAX_FRAMES,
+    ) -> Iterator[np.ndarray]:
+        """
+        Stream frames from a video file, yielding every Nth frame.
+
+        Args:
+            video_path: Path to the video file.
+            frame_stride: Process every Nth frame to reduce workload.
+            max_frames: Hard cap on frames yielded.
+        """
+
+        if not HAS_CV2:
+            logger.warning("OpenCV is required for video processing; skipping video")
+            return iter(())
+
+        path = Path(video_path)
+        if not path.exists():
+            logger.error("Video file does not exist: %s", video_path)
+            return iter(())
+
+        if not VideoProcessor._validate_video_extension(path):
+            logger.error(
+                "Unsupported video format %s. Allowed: %s",
+                path.suffix,
+                getattr(config, "ALLOWED_VIDEO_FORMATS", set()),
+            )
+            return iter(())
+
+        stride = max(1, int(frame_stride))
+        limit = max(1, int(max_frames)) if max_frames else None
+
+        cap = cv2.VideoCapture(str(path))
+        if not cap.isOpened():
+            logger.error("Failed to open video: %s", video_path)
+            return iter(())
+
+        def _frame_iterator() -> Iterator[np.ndarray]:
+            try:
+                frame_idx = 0
+                yielded = 0
+                while cap.isOpened():
+                    ok, frame = cap.read()
+                    if not ok or frame is None:
+                        break
+
+                    if frame_idx % stride != 0:
+                        frame_idx += 1
+                        continue
+
+                    yield frame
+                    yielded += 1
+                    frame_idx += 1
+
+                    if limit is not None and yielded >= limit:
+                        break
+            finally:
+                cap.release()
+
+        return _frame_iterator()
+
+    @staticmethod
+    def iterate_frames_from_bytes(
+        video_bytes: bytes,
+        suffix: str = ".mp4",
+        frame_stride: int = DEFAULT_VIDEO_FRAME_STRIDE,
+        max_frames: int = DEFAULT_VIDEO_MAX_FRAMES,
+    ) -> Iterator[np.ndarray]:
+        """Persist bytes to a temporary file and stream frames."""
+
+        if not video_bytes:
+            return iter(())
+
+        with NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(video_bytes)
+            tmp_path = tmp.name
+
+        def _iterator() -> Iterator[np.ndarray]:
+            try:
+                yield from VideoProcessor.iterate_frames_from_file(
+                    tmp_path, frame_stride=frame_stride, max_frames=max_frames
+                )
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+
+        return _iterator()
+
+    @staticmethod
+    def sample_frames_from_file(
+        video_path: str,
+        frame_stride: int = DEFAULT_VIDEO_FRAME_STRIDE,
+        max_frames: int = DEFAULT_VIDEO_MAX_FRAMES,
+    ) -> List[np.ndarray]:
+        """Return a small list of frames for quick processing."""
+
+        frames: List[np.ndarray] = []
+        for frame in VideoProcessor.iterate_frames_from_file(
+            video_path, frame_stride=frame_stride, max_frames=max_frames
+        ):
+            frames.append(frame)
+        return frames
+
+    @staticmethod
+    def sample_frames_from_bytes(
+        video_bytes: bytes,
+        suffix: str = ".mp4",
+        frame_stride: int = DEFAULT_VIDEO_FRAME_STRIDE,
+        max_frames: int = DEFAULT_VIDEO_MAX_FRAMES,
+    ) -> List[np.ndarray]:
+        """Return a sampled list of frames from raw bytes."""
+
+        frames: List[np.ndarray] = []
+        for frame in VideoProcessor.iterate_frames_from_bytes(
+            video_bytes,
+            suffix=suffix,
+            frame_stride=frame_stride,
+            max_frames=max_frames,
+        ):
+            frames.append(frame)
+        return frames

@@ -1,14 +1,15 @@
 # SocialVision Development Roadmap
 
-**Version:** 1.0.0  
-**Last Updated:** December 2024  
-**Project Timeline:** 10 Weeks (Currently at Week 6)
+**Version:** 1.1.0  
+**Last Updated:** January 2026
 
 ---
 
 ## 📊 Project Overview
 
-This roadmap outlines the development plan for SocialVision, a facial recognition search engine for large-scale visual content analysis. The project is currently at **60% completion** and in **Phase 3** of development.
+This roadmap outlines the development plan for SocialVision, a facial recognition search engine for large-scale visual content analysis.
+
+Note: the codebase has evolved beyond the original week-by-week plan (multi-backend DB support, video/live inputs, and a fast recognition path). Use this document as a high-level roadmap, and refer to `docs/PROJECT_STATUS.md` for the most current status.
 
 ---
 
@@ -155,26 +156,23 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 
 ## 🚀 Future Development Phases
 
-### Phase 6: Firebase Integration (Weeks 11-13)
+### ✅ Phase 6: Firebase Integration
 
-**Status:** ❌ **Not Started**
+**Status:** ✅ **Complete**
 
 **Objectives:**
-- Migrate from local JSON to Firestore
-- Implement Firebase Storage
-- Add Firebase Authentication
-- Real-time synchronization
+- Support cloud-backed persistence alongside local JSON
+- Provide Firebase Realtime Database and Firestore backends
+- Allow `DB_TYPE=firebase` auto-mode fallback (Realtime → Firestore → local)
 
 **Tasks:**
 1. Set up Firebase project
 2. Configure Firebase Admin SDK
-3. Design Firestore schema
-4. Implement database migration
-5. Add Firebase Storage integration
-6. Implement authentication
-7. Testing and validation
+3. Implement Realtime DB and Firestore drivers
+4. Add backend selection and fallback behavior via `DB_TYPE`
+5. Add tests and validation for cloud/local parity
 
-**Estimated Effort:** 3 weeks
+**Estimated Effort:** Completed
 
 ---
 
@@ -203,7 +201,7 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 
 ### Phase 8: API Development (Weeks 18-19)
 
-**Status:** ❌ **Not Started**
+**Status:** ⚠️ **In Progress (MVP delivered)**
 
 **Objectives:**
 - Create RESTful API endpoints
@@ -212,12 +210,12 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 - Rate limiting
 
 **Tasks:**
-1. Set up FastAPI/Flask
-2. Create API routes
-3. Implement authentication
-4. Add rate limiting
-5. Create API documentation
-6. Testing
+1. ✅ Set up FastAPI
+2. ✅ Create API routes for search/add/enrich (image, video, camera frames)
+3. 🚧 Implement authentication
+4. 🚧 Add rate limiting
+5. 🚧 Create API documentation (usage guide + examples)
+6. ✅ Testing (unit coverage for pipeline/search/video sampling already exists)
 
 **Estimated Effort:** 2 weeks
 
@@ -250,7 +248,7 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 ### Sprint Goals
 
 1. **Fix Critical Issues**
-   - Fix embedding dimension mismatch (128 vs 512)
+   - Maintain compatibility across embedding dimensions (fast 128-d vs DeepFace 512-d)
    - Improve error handling
    - Add input validation
 
@@ -331,9 +329,9 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 | Phase 3: Search Engine | ✅ Complete | 100% |
 | Phase 4: UI Development | ⚠️ In Progress | 90% |
 | Phase 5: Testing | ⚠️ In Progress | 40% |
-| Phase 6: Firebase | ❌ Not Started | 0% |
+| Phase 6: Firebase | ✅ Complete | 100% |
 | Phase 7: External Ingestion | ❌ Not Started | 0% |
-| Phase 8: API | ❌ Not Started | 0% |
+| Phase 8: API | ⚠️ In Progress | 50% |
 | Phase 9: Advanced | ❌ Not Started | 0% |
 
 ### Feature Completion
@@ -346,9 +344,9 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 | Search Engine | ✅ Complete | High |
 | Streamlit UI | ✅ Complete | High |
 | Unit Tests | ✅ Complete | High |
-| Firebase Integration | ❌ Not Started | High |
+| Firebase Integration | ✅ Complete | High |
 | External Data Integration | ❌ Not Started | Medium |
-| API Endpoints | ❌ Not Started | Medium |
+| API Endpoints | ⚠️ Partial (MVP shipped) | Medium |
 | Advanced Features | ⚠️ Partial | Low |
 | Performance Optimization | ❌ Not Started | Medium |
 | Security Features | ⚠️ Partial | High |
@@ -359,17 +357,17 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 
 ### High Priority
 
-1. **Embedding Dimension Mismatch**
-   - Issue: Database expects 128-dim, engine produces 512-dim
-   - Impact: High
-   - Effort: 1-2 days
-   - Status: Needs fixing
+1. **Embedding Dimension Compatibility**
+   - Issue: Mixed embedding dimensions (fast 128-d vs DeepFace 512-d) require careful handling
+   - Impact: Medium
+   - Effort: Ongoing
+   - Status: Addressed via dimension-aware storage + safe comparison; continue monitoring
 
-2. **Firebase Not Implemented**
-   - Issue: Configuration exists but no implementation
-   - Impact: High
-   - Effort: 2-3 weeks
-   - Status: Planned for Phase 6
+2. **Firebase Scope Gaps (Auth/Storage)**
+   - Issue: Database backends are supported, but authentication/storage features may still be out of scope depending on deployment
+   - Impact: Medium
+   - Effort: TBD
+   - Status: Deferred
 
 3. **Limited Error Handling**
    - Issue: Some edge cases not handled
@@ -379,8 +377,8 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 
 ### Medium Priority
 
-4. **No Integration Tests**
-   - Issue: Only unit tests exist
+4. **Limited End-to-End Tests**
+   - Issue: Most coverage is unit/functional; end-to-end flows depend on external services (camera, cloud backends)
    - Impact: Medium
    - Effort: 1 week
    - Status: Planned
@@ -476,5 +474,5 @@ This roadmap outlines the development plan for SocialVision, a facial recognitio
 
 ---
 
-*This roadmap is updated regularly. Last update: December 2024*
+*This roadmap is updated regularly. Last update: January 2026*
 

@@ -2,7 +2,7 @@
 
 **How to Show What the Application Does**  
 **Version:** 1.1.0  
-**Last Updated:** December 2025 (Firestore + Real-ESRGAN tiling)
+**Last Updated:** January 2026 (multi-backend DB + video/live inputs)
 
 ---
 
@@ -17,12 +17,13 @@ This guide helps you demonstrate SocialVision's capabilities to others, whether 
 
 ---
 
-## 📌 Current Status Snapshot (December 2025)
+## 📌 Current Status Snapshot
 
-- Real-ESRGAN x4 is the default upscaler with adaptive tile targeting and CPU guardrails
-- Firestore FaceDatabase is live by default (JSON + Firestore emulator supported for offline demos)
-- DeepFace/VGGFace2 embeddings drive similarity search with configurable thresholds and telemetry logs
-- Streamlit UI exposes Search, Add Faces, and Analytics tabs plus backend status indicators (Firestore, GPU, model cache)
+- Real-ESRGAN x4 is supported with adaptive tiling and safe fallbacks when resources are constrained
+- FaceDatabase supports local JSON, Firebase Realtime Database, and Firestore (`DB_TYPE` selects the backend)
+- Search supports image upload, video upload (sampled frames), and live camera capture (WebRTC when available; fallback otherwise)
+- DeepFace/VGGFace2 (512-d) embeddings are used when enabled; a fast dlib (128-d) path exists for responsiveness
+- Streamlit UI exposes Search, Add Faces, and Analytics tabs plus backend status indicators
 
 ---
 
@@ -31,7 +32,7 @@ This guide helps you demonstrate SocialVision's capabilities to others, whether 
 ### Option 1: Docker (Recommended)
 
 ```bash
-# 1. Build and start (Real-ESRGAN + Firestore defaults baked in)
+# 1. Build and start (defaults are configured in docker-compose.yml)
 docker compose build
 docker compose up -d
 
@@ -65,7 +66,7 @@ streamlit run src/app.py
 > "SocialVision is a facial recognition search engine designed for analyst-curated visual collections. It can detect faces in images, extract unique facial features, and search for similar faces in a database. Let me show you what it can do."
 
 **What to Show:**
-- Open the application (point out the "Initialized Firestore FaceDatabase" log line if using the cloud backend)
+- Open the application (point out the "Initialized FaceDatabase" log line and the selected `DB_TYPE` backend)
 - Show the three main tabs: Search, Add Faces, Analytics
 - Point out the clean, professional interface and mention that backend telemetry (Real-ESRGAN tiling, DeepFace status) is visible in the logs
 
@@ -77,7 +78,7 @@ streamlit run src/app.py
 **Steps to Demonstrate:**
 
 1. **Go to "📤 Add Faces" tab**
-   - Explain: "This is where we add new faces to our Firestore-backed database (JSON fallback still available for offline demos)"
+   - Explain: "This is where we add new faces to the configured database backend (local JSON / Realtime DB / Firestore)"
 
 2. **Upload a test image**
    - Use an image with 1-2 clear faces
@@ -90,7 +91,7 @@ streamlit run src/app.py
 
 4. **Click "➕ Add to Database"**
    - Show the processing spinner
-   - Explain: "The system upscales via Real-ESRGAN (watch the tiling logs), detects faces, and extracts 512-dimensional embeddings"
+   - Explain: "The system may upscale (watch the tiling logs), detects faces, and extracts embeddings (DeepFace 512-d when enabled; fast mode may use 128-d)"
    - Wait for success message
 
 5. **Repeat with 2-3 more images**
@@ -125,7 +126,7 @@ streamlit run src/app.py
 
 4. **Click "🔍 Search"**
    - Show processing
-   - Explain: "The system is upscaling (Real-ESRGAN tile logs), detecting faces, extracting embeddings, and searching the Firestore database"
+   - Explain: "The system is upscaling (if enabled), detecting faces, extracting embeddings, and searching the configured database backend"
 
 5. **Show results**
    - Point out: "Found X matches across Y users"
@@ -215,7 +216,7 @@ streamlit run src/app.py
 - Real-ESRGAN upscaling pass with adaptive tile targeting (logged per request)
 - VGGFace2 model for embeddings
 - 512-dimensional feature vectors scored with Euclidean distance
-- Firestore FaceDatabase (JSON fallback kept for air-gapped demos)
+- Multi-backend FaceDatabase (Realtime DB / Firestore / local JSON for air-gapped demos)
 
 ### Scenario 2: Client Demo (8 minutes)
 
@@ -328,7 +329,7 @@ streamlit run src/app.py
    - "Euclidean distance with configurable acceptance thresholds"
 
 3. **Scalability:**
-   - "Firestore is the default multi-region backend with automatic collection provisioning"
+   - "Firestore is an available managed backend option with automatic collection provisioning"
    - "Vector search layer can be swapped for FAISS/Annoy when dataset grows"
    - "Batch ingestion and streaming pipelines keep throughput predictable"
 
@@ -374,7 +375,7 @@ streamlit run src/app.py
 **Backup Plan:**
 - Lower the threshold
 - Add more faces first
-- Confirm Firestore status badge shows **CONNECTED** (switch to JSON fallback if offline)
+- Confirm the backend status badge shows **CONNECTED** (switch to local JSON if offline)
 - Use the same image you added
 
 ### If Application Crashes
@@ -394,7 +395,7 @@ streamlit run src/app.py
 ### Before the Demo
 
 - [ ] Application is running and accessible
-- [ ] Firestore credentials/service account JSON is loaded (or FIRESTORE_EMULATOR_HOST set)
+- [ ] Firebase credentials/service account JSON is loaded (or emulator env vars set, if used)
 - [ ] Test images are ready (3-5 images with faces)
 - [ ] Database has some test data (optional)
 - [ ] Browser is open and ready
@@ -498,5 +499,5 @@ streamlit run src/app.py
 
 ---
 
-*Last Updated: December 2024*
+*Last Updated: January 2026*
 

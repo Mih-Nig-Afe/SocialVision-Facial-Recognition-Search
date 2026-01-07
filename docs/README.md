@@ -10,13 +10,15 @@ Central knowledge base for the SocialVision research project. Use this index to 
 
 1. **[PROJECT_STATUS.md](PROJECT_STATUS.md)** – Executive summary, completion metrics, risks, KPIs.
 2. **[CURRENT_CAPABILITIES.md](CURRENT_CAPABILITIES.md)** – Quick feature reference, usage snippets, limitations.
-3. **[TESTING_GUIDE.md](TESTING_GUIDE.md)** – Automated + manual test recipes, troubleshooting trees.
-4. **[DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md)** – Phase definitions, milestones, priority backlog.
-5. **[SocialVision_Technical_Proposal.md](SocialVision_Technical_Proposal.md)** – Full architecture and research narrative.
+3. **[ARCHITECTURE.md](ARCHITECTURE.md)** – System architecture + UML/Mermaid diagrams (image/video/live flows).
+4. **[API_USAGE.md](API_USAGE.md)** – FastAPI endpoints + runnable curl examples.
+5. **[TESTING_GUIDE.md](TESTING_GUIDE.md)** – Automated + manual test recipes, troubleshooting trees.
+6. **[DEVELOPMENT_ROADMAP.md](DEVELOPMENT_ROADMAP.md)** – Phase definitions, milestones, priority backlog.
+7. **[SocialVision_Technical_Proposal.md](SocialVision_Technical_Proposal.md)** – Full architecture and research narrative.
 
 ### Deployment & Demo Guides
 
-- **[DOCKER_TESTING_GUIDE.md](DOCKER_TESTING_GUIDE.md)** – BuildKit workflow, Compose profiles, GPU notes, common errors.
+- **[DOCKER_TESTING_GUIDE.md](DOCKER_TESTING_GUIDE.md)** – Compose workflow, CPU/GPU notes, common errors.
 - **[DEMONSTRATION_GUIDE.md](DEMONSTRATION_GUIDE.md)** – End-to-end demo scripts and talking points.
 
 ---
@@ -33,14 +35,15 @@ Central knowledge base for the SocialVision research project. Use this index to 
 
 | Document | Status | Last Updated |
 |----------|--------|--------------|
-| PROJECT_STATUS.md | 🔄 In Sync | Dec 2025 (Real-ESRGAN tiling + Firestore) |
-| CURRENT_CAPABILITIES.md | 🔄 In Sync | Dec 2025 (AI upscaler + Firestore live) |
-| TESTING_GUIDE.md | 🔄 Updated | Dec 2025 (multi-backend QA) |
-| DOCKER_TESTING_GUIDE.md | 🔄 Updated | Dec 2025 (target tiles + compose) |
-| DEMONSTRATION_GUIDE.md | 🔄 Updated | Dec 2025 (Firestore-first demos) |
-| DEVELOPMENT_ROADMAP.md | 🔄 Updated | Dec 2025 (Phase 5 focus) |
+| PROJECT_STATUS.md | 🔄 In Sync | Jan 2026 (video/live + ops hardening) |
+| CURRENT_CAPABILITIES.md | 🔄 In Sync | Jan 2026 (video/live + fast mode) |
+| ARCHITECTURE.md | 🆕 Added | Jan 2026 (Mermaid UML diagrams) |
+| TESTING_GUIDE.md | 🔄 Updated | Jan 2026 (updated test map + multi-backend notes) |
+| DOCKER_TESTING_GUIDE.md | 🔄 Updated | Jan 2026 (docker compose v2 + current defaults) |
+| DEMONSTRATION_GUIDE.md | 🔄 Updated | Jan 2026 (multi-backend + video/live demos) |
+| DEVELOPMENT_ROADMAP.md | 🔄 Updated | Jan 2026 (Firebase status corrected) |
 | Technical Proposal | 🔄 Updated | Dec 2025 (stack modernization) |
-| API Documentation | ⏳ Planned | TBA |
+| API_USAGE.md | 🆕 Added | Jan 2026 (FastAPI endpoints + examples) |
 | Installation Guide | 🔄 Covered in root README/Quick Start | Dec 2025 (Real-ESRGAN defaults) |
 
 Dates reflect the last substantive edit, not formatting changes. If you touch a document, bump the date and summarize the change at the top of that file.
@@ -56,5 +59,5 @@ Questions or requests for documentation updates:
 
 ---
 
-Last updated: December 2025 (Real-ESRGAN tiling & Firestore refresh)
+Last updated: January 2026 (docs refresh: video/live + multi-backend DB)
 

@@ -1,0 +1,25 @@
+[browser]
+# Configure which URL to show to users
+serverAddress = "localhost"
+serverPort = 8501
+
+[server]
+# Server must listen on 0.0.0.0 in Docker, but show localhost to users
+address = "0.0.0.0"
+port = 8501
+headless = true
+enableCORS = true
+enableXsrfProtection = true
+
+[client]
+# Show toolbar in development
+showSidebarNavigation = true
+toolbarMode = "auto"
+
+[theme]
+# Modern dark theme
+primaryColor = "#FF6B6B"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
+

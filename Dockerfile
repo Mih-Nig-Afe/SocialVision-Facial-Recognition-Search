@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.6
 # Simplified single-stage build for SocialVision Facial Recognition Search Engine
 FROM python:3.11-slim
 
@@ -49,20 +48,41 @@ WORKDIR /app
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
-# Use an extended timeout when upgrading pip/setuptools to avoid network read timeouts,
-# then install project dependencies. Ensure standard OpenCV (cv2) is available for DeepFace.
-# Install TensorFlow and Keras first to ensure compatibility, then DeepFace
-RUN --mount=type=cache,target=/root/.cache/pip \
-    set -eux; \
-    export PIP_NO_CACHE_DIR=0; \
-    pip install --default-timeout=3600 --upgrade pip setuptools wheel; \
-    pip install --default-timeout=3600 --retries 10 -r requirements.txt; \
-    python - <<'PY'
-from deepface import DeepFace
-import tensorflow as tf
-import keras
+# Install dependencies in optimized stages to handle network timeouts
+# Stage 1: Upgrade pip and install core build tools
+RUN pip install --default-timeout=600 --retries=5 --upgrade pip setuptools wheel
 
-print(f"DeepFace OK. TF: {tf.__version__}, Keras: {keras.__version__}")
+# Stage 2: Install large packages separately to avoid JSON decode errors
+RUN pip install --default-timeout=1800 --retries=10 --no-cache-dir \
+    numpy==1.26.4 scipy==1.14.1 || \
+    pip install --default-timeout=1800 --retries=10 \
+    numpy==1.26.4 scipy==1.14.1
+
+# Stage 3: Install PyTorch separately (large package, prone to timeouts)
+RUN pip install --default-timeout=1800 --retries=10 --no-cache-dir \
+    torch==2.4.1 torchvision==0.19.1 || \
+    pip install --default-timeout=1800 --retries=10 \
+    torch==2.4.1 torchvision==0.19.1
+
+# Stage 4: Install TensorFlow and Keras (quote version constraints to avoid shell redirection)
+RUN pip install --default-timeout=1800 --retries=10 \
+    tensorflow==2.16.1 "keras>=3.0.0,<4.0.0" tf-keras==2.16.0
+
+# Stage 5: Install remaining requirements
+RUN pip install --default-timeout=1800 --retries=10 -r requirements.txt || \
+    (pip install --default-timeout=1800 --retries=10 --no-cache-dir -r requirements.txt)
+
+# Stage 6: Verify critical imports
+RUN python - <<'PY'
+try:
+    from deepface import DeepFace
+    import tensorflow as tf
+    import keras
+    import torch
+    print(f"✓ DeepFace OK. TF: {tf.__version__}, Keras: {keras.__version__}, PyTorch: {torch.__version__}")
+except Exception as e:
+    print(f"✗ Import error: {e}")
+    raise
 PY
 
 # Pre-fetch DeepFace weights so runtime workload doesn't redownload models

@@ -38,6 +38,23 @@ class Config:
     )
     FIREBASE_ENABLED = os.getenv("FIREBASE_ENABLED", "False").lower() == "true"
     FIREBASE_PROJECT_ID = os.getenv("FIREBASE_PROJECT_ID")
+    FIREBASE_DATABASE_URL = os.getenv("FIREBASE_DATABASE_URL")
+    FIREBASE_DB_ROOT = os.getenv("FIREBASE_DB_ROOT", "faces_database")
+    REALTIME_BOOTSTRAP_FROM_LOCAL = (
+        os.getenv("REALTIME_BOOTSTRAP_FROM_LOCAL", "False").lower() == "true"
+    )
+    # Realtime DB write behavior:
+    # - REALTIME_DELTA_EMBEDDINGS: when a user already has a face record that is missing
+    #   some embedding keys (e.g., dlib), only PATCH the missing keys instead of
+    #   creating a new face record (keeps uploads minimal).
+    # - REALTIME_STORE_PROFILE_EMBEDDING: whether to persist profile centroid vectors
+    #   to RTDB (can increase write sizes). Disabled by default.
+    REALTIME_DELTA_EMBEDDINGS = (
+        os.getenv("REALTIME_DELTA_EMBEDDINGS", "True").lower() == "true"
+    )
+    REALTIME_STORE_PROFILE_EMBEDDING = (
+        os.getenv("REALTIME_STORE_PROFILE_EMBEDDING", "False").lower() == "true"
+    )
     FIRESTORE_COLLECTION_PREFIX = os.getenv(
         "FIRESTORE_COLLECTION_PREFIX", "socialvision_"
     )
@@ -46,6 +63,19 @@ class Config:
     FIRESTORE_ENSURE_DATABASE = (
         os.getenv("FIRESTORE_ENSURE_DATABASE", "False").lower() == "true"
     )
+    # Firestore REST safety: avoid hammering the API from Streamlit reruns.
+    # - BOOTSTRAP_FROM_LOCAL: when Firestore collection is empty, upload faces from LOCAL_DB_PATH once.
+    # - STATS_CACHE_TTL: caches expensive listDocuments-based statistics.
+    FIRESTORE_BOOTSTRAP_FROM_LOCAL = (
+        os.getenv("FIRESTORE_BOOTSTRAP_FROM_LOCAL", "False").lower() == "true"
+    )
+    FIRESTORE_STATS_CACHE_TTL_SECONDS = float(
+        os.getenv("FIRESTORE_STATS_CACHE_TTL_SECONDS", "10")
+    )
+    FIRESTORE_REST_MAX_RETRIES = int(os.getenv("FIRESTORE_REST_MAX_RETRIES", "5"))
+    FIRESTORE_REST_TIMEOUT_SECONDS = float(
+        os.getenv("FIRESTORE_REST_TIMEOUT_SECONDS", "20")
+    )
 
     # Face Recognition settings
     FACE_RECOGNITION_MODEL = "hog"  # "hog" or "cnn" (cnn is more accurate but slower)
@@ -53,6 +83,7 @@ class Config:
     FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "0.6"))
     DEEPFACE_MODEL = os.getenv("DEEPFACE_MODEL", "Facenet512")
     DEEPFACE_DETECTOR_BACKEND = os.getenv("DEEPFACE_DETECTOR_BACKEND", "opencv")
+    DEEPFACE_ENABLED = os.getenv("DEEPFACE_ENABLED", "True").lower() == "true"
     FACE_SIMILARITY_THRESHOLD = float(os.getenv("FACE_SIMILARITY_THRESHOLD", "0.35"))
     ENABLE_DUAL_EMBEDDINGS = (
         os.getenv("ENABLE_DUAL_EMBEDDINGS", "True").lower() == "true"
@@ -82,6 +113,17 @@ class Config:
         "pgm",
         "pbm",
     }
+    # Video processing settings
+    MAX_VIDEO_SIZE = int(os.getenv("MAX_VIDEO_SIZE", "52428800"))  # 50MB
+    ALLOWED_VIDEO_FORMATS = {
+        "mp4",
+        "mov",
+        "avi",
+        "mkv",
+        "webm",
+    }
+    VIDEO_FRAME_STRIDE = int(os.getenv("VIDEO_FRAME_STRIDE", "5"))
+    VIDEO_MAX_FRAMES = int(os.getenv("VIDEO_MAX_FRAMES", "90"))
     IMAGE_QUALITY = int(os.getenv("IMAGE_QUALITY", "85"))
     IMAGE_UPSCALING_ENABLED = (
         os.getenv("IMAGE_UPSCALING_ENABLED", "True").lower() == "true"
@@ -134,7 +176,7 @@ class Config:
     SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.6"))
 
     # Database settings
-    DB_TYPE = os.getenv("DB_TYPE", "local")  # "local" or "firebase"
+    DB_TYPE = os.getenv("DB_TYPE", "local")  # local|firestore|realtime|firebase
     LOCAL_DB_PATH = str(DATA_DIR / "faces_database.json")
 
     # API settings
@@ -159,8 +201,23 @@ class Config:
     def load_firebase_config(cls) -> Optional[Dict[str, Any]]:
         """Load Firebase configuration from JSON file"""
         try:
-            if os.path.exists(cls.FIREBASE_CONFIG_PATH):
+            # 1) Explicit path (recommended)
+            if cls.FIREBASE_CONFIG_PATH and os.path.exists(cls.FIREBASE_CONFIG_PATH):
                 with open(cls.FIREBASE_CONFIG_PATH, "r") as f:
+                    return json.load(f)
+
+            # 2) Auto-discover a service-account key placed in the repo root
+            # (useful for local development; keep keys out of version control).
+            root = Path(cls.BASE_DIR)
+            matches = sorted(root.glob("*firebase-adminsdk-*.json"))
+            if matches:
+                with open(matches[0], "r") as f:
+                    return json.load(f)
+
+            # 3) Fall back to config/firebase_config.json if present
+            default_path = Path(cls.CONFIG_DIR) / "firebase_config.json"
+            if default_path.exists():
+                with open(default_path, "r") as f:
                     return json.load(f)
         except Exception as e:
             print(f"Error loading Firebase config: {e}")
@@ -199,6 +256,7 @@ class TestingConfig(Config):
     IMAGE_UPSCALING_ENABLED = False
     IBM_MAX_ENABLED = False
     NCNN_UPSCALING_ENABLED = False
+    DEEPFACE_ENABLED = False
 
 
 def get_config() -> Config:

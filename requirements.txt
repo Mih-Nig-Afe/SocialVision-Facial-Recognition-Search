@@ -4,6 +4,7 @@
 
 # Core Web Framework
 streamlit==1.39.0
+streamlit-webrtc==0.47.9
 gradio==4.44.0
 
 # Computer Vision and Machine Learning

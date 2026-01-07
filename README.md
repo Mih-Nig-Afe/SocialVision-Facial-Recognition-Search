@@ -1,4 +1,4 @@
-# SocialVision: Advanced Facial Recognition Search Engine
+# SocialVision — Intelligent Facial Recognition Search Engine
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.39+-red.svg)](https://streamlit.io)
@@ -7,7 +7,13 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ed.svg)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-SocialVision is an academic research project that builds an end‑to‑end facial recognition search engine for operator-curated visual datasets. The stack combines **DeepFace (TensorFlow/Keras)** embeddings with **dlib/face_recognition** encodings, fuses both vectors per face, and exposes the experience through a Streamlit UI, local JSON database, and automated tests that keep the pipeline reproducible.
+SocialVision is an **intelligent facial recognition and identity search system** designed for real-time face detection, verification, and similarity-based identity retrieval across operator-curated visual datasets.
+
+The project implements an **end-to-end computer vision and deep learning pipeline**, combining **DeepFace (Facenet512, TensorFlow/Keras)** embeddings with **dlib / face_recognition** encodings. These dual embeddings are fused per detected face to improve robustness, confidence scoring, and real-world reliability.
+
+SocialVision supports **automatic dataset enrichment, self-training identity profiles, and adaptive learning workflows**, allowing the system to continuously improve recognition accuracy as new faces are searched and verified. The platform is exposed through a **Streamlit-based command interface**, backed by a local JSON or Firestore database, Dockerized operations, and automated tests to ensure reproducibility and research-grade quality.
+
+> **Positioning:** Research-grade facial recognition system demonstrating real-world AI pipelines, adaptive learning, and scalable computer vision architectures.
 
 > **Maintainer**: Mihretab N. Afework ([@Mih-Nig-Afe](https://github.com/Mih-Nig-Afe)) · <mtabdevt@gmail.com>
 
@@ -30,40 +36,56 @@ SocialVision is an academic research project that builds an end‑to‑end facia
 
 | Area | Highlights |
 |------|------------|
-| **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, automatic fallbacks if TensorFlow is unavailable. |
-| **Face Search Engine** | Detection, embedding, cosine similarity search, identity aggregation, configurable thresholds, enrichment workflows that continuously learn from matches. |
-| **Self-Training Profiles** | When a search match clears the confidence threshold the system automatically appends that face’s embeddings back into the person’s profile, expanding per-user dimensions/metadata without manual labeling. |
+| **Dual Embedding Pipeline** | DeepFace (Facenet512) + dlib encodings stored side-by-side, weighted similarity scoring, and safe handling of mixed dimensions (e.g. 128 vs 512). |
+| **Facial Recognition Search Engine** | Mode-agnostic matching: whatever extraction mode is used, search compares against the whole DB using compatible embedding keys and dimensions. |
+| **Self-Training Profiles** | Confident matches trigger enrichment that **adds only missing embedding keys (“dimensions”)** for that identity instead of re-uploading everything. |
+| **Input Modes** | Image upload, video upload (frame sampling), and live camera. Live camera runs via WebRTC when available; a capture-based fallback exists for environments without WebRTC support. |
+| **Face Quality Gate** | Optional face quality scoring (blur/brightness/contrast/sharpness) plus auto-improvement (CLAHE/denoise/sharpen) before adding/enriching faces. |
 | **High-Fidelity Preprocessing** | Real-ESRGAN is the default super-resolution backend with configurable pass counts, minimum trigger scale, and per-image tile targeting (e.g., force ~25 tiles per inference) while the IBM MAX sidecar and NCNN CLI remain optional accelerators. When GPU memory is unavailable, the pipeline automatically clamps to CPU-safe settings before falling back on OpenCV/Lanczos. |
 | **Streamlit Command Center** | Tabs for Search, Add Faces, Analytics; live metrics, threshold sliders, backend telemetry, and enrichment summaries meant for operator demos. |
-| **Data Layer** | Firestore-backed `FaceDatabase` is now the recommended runtime (automatic collection provisioning, provenance metadata, username centroid cache) with the JSON store still available for fully offline demos. |
-| **Operations** | Docker image with BuildKit pip caching (no repeated TensorFlow wheel downloads), DeepFace weight prefetch, CLI demo script, logging + health checks. |
+| **FastAPI Service (Optional)** | REST endpoints for search/add/enrich over images, videos, and camera frames (base64), plus a `/health` readiness endpoint. |
+| **Data Layer** | Supports local JSON, Firebase Realtime Database (incremental writes + delta embedding patches), and Firestore. `DB_TYPE=firebase` prefers Realtime DB first, then falls back to Firestore, then local JSON. |
+| **Operations** | Docker image designed for reproducible builds (layer caching, staged dependency installs), DeepFace weight prefetch, CLI demo script, logging + health checks. |
 | **Quality & Docs** | Pytest coverage for engine/database/search, reproducible fixtures, comprehensive docs mirroring professional OSS projects. |
 
 ---
 
 ## Architecture
 
-```text
-        +---------------------------+
-        |        Streamlit UI       |
-        |  Search / Add / Analytics |
-        +-------------+-------------+
-                      |
-                      v
-        +-------------+-------------+
-        |     SearchEngine API      |
-        | - Enrichment workflows    |
-        | - Threshold controls      |
-        +------+------+-------------+
-               |      |
-     +---------+      +---------+
-     v                          v
-FaceRecognitionEngine     FaceDatabase
-(DeepFace + dlib)         (JSON + metadata cache)
-     |                          |
-     v                          v
- DeepFace cache        data/faces_database.json
- dlib (face_recognition)
+For full UML-style diagrams (system context, sequences, DB backend selection), see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+```mermaid
+classDiagram
+    class StreamlitUI {
+        +Search
+        +AddFaces
+        +Analytics
+    }
+
+    class SearchEngine {
+        +search_by_image()
+        +aggregate_by_username()
+        +auto_enrich_identity()
+    }
+
+    class FaceRecognitionEngine {
+        +detect_faces()
+        +extract_embeddings()
+        +DeepFace512d
+        +Dlib128d
+    }
+
+    class FaceDatabase {
+        +add_face()
+        +search_similar_faces()
+        +LocalJSON
+        +RealtimeDB
+        +Firestore
+    }
+
+    StreamlitUI --> SearchEngine
+    SearchEngine --> FaceRecognitionEngine
+    SearchEngine --> FaceDatabase
 ```
 
 - **Detection/Embedding**: `FaceRecognitionEngine` first attempts DeepFace (Facenet512) and, based on config, also runs dlib encoders. Embeddings are normalized, bundled, and tagged per backend (`{"deepface": [...], "dlib": [...]}`).
@@ -102,7 +124,6 @@ streamlit run src/app.py
 ### Docker Workflow (recommended for demos)
 
 ```bash
-export DOCKER_BUILDKIT=1
 docker compose build
 docker compose up -d
 # or
@@ -111,11 +132,11 @@ docker compose up -d
 
 Features of the container image:
 
-- BuildKit cache mount for pip (`/root/.cache/pip`) so large wheels (TensorFlow, DeepFace) download once.
+- Uses Docker layer caching and staged dependency installs to reduce rebuild time for large ML packages.
 - Pre-fetch of DeepFace weights during build, reducing cold-start latency.
 - Health check hitting `/_stcore/health` to signal readiness.
 - Real-ESRGAN weights baked into `models/` plus environment-driven tiling so Docker-on-Mac users can force ~25 tiles per frame without editing code.
-- Optional [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) sidecar running as `ibm-max`, with `socialvision-app` wired to call it automatically (`IBM_MAX_URL=http://ibm-max:5000`). Override the exposed host port via `IBM_MAX_HOST_PORT` (defaults to `5100`) if something else already listens on `localhost:5000`, and override the image architecture with `IBM_MAX_PLATFORM` (defaults to `linux/amd64`) when running on Apple Silicon via emulation.
+- Optional [IBM MAX Image Resolution Enhancer](https://github.com/IBM/MAX-Image-Resolution-Enhancer) sidecar (`ibm-max`). The shipped `docker-compose.yml` keeps it commented out and `IBM_MAX_ENABLED=false` by default; enable it on x86 hosts if you want IBM MAX ahead of the Real-ESRGAN/OpenCV/Lanczos fallback chain.
 
 Access the UI at `http://localhost:8501`.
 
@@ -130,6 +151,29 @@ Access the UI at `http://localhost:8501`.
 1. **🔍 Search** – Upload an image, system detects faces, extracts dual embeddings, and surfaces matches with similarity scores. When a match exceeds the configured threshold, that same embedding bundle is appended to the matched profile automatically, so the database keeps training itself from real search traffic.
 2. **📤 Add Faces** – Upload faces for specific usernames; the UI now uploads full embedding bundles so the database can blend DeepFace+dlib vectors.
 3. **📈 Analytics** – Watch total faces, unique users, and per-source charts sourced directly from the JSON database.
+
+### FastAPI (Optional)
+
+The repo includes a FastAPI app at `src/api.py`.
+
+Run locally:
+
+```bash
+uvicorn src.api:app --host 0.0.0.0 --port 8000
+```
+
+Then open Swagger UI at `http://localhost:8000/docs`.
+
+Implemented endpoints (high level):
+
+- `POST /api/enrich-face` (image upload)
+- `POST /api/enrich-video` (video upload + frame sampling)
+- `POST /api/search-face` (image upload)
+- `POST /api/search-video` (video upload)
+- `POST /api/search-camera` (base64 camera frame)
+- `POST /api/add-face` (image upload)
+- `POST /api/add-video` (video upload)
+- `GET /health`
 
 ### Programmatic Example
 
@@ -165,15 +209,28 @@ Key environment variables (see `src/config.py` for defaults):
 | `IMAGE_UPSCALING_MAX_PASSES` | Maximum number of Real-ESRGAN passes to chain (default `2`) before falling back to OpenCV/Lanczos, keeping RAM usage predictable. |
 | `IMAGE_UPSCALING_TARGET_TILES` | Desired number of Real-ESRGAN tiles per frame (default `0`, meaning “use the configured tile size”). Set to `25` to force roughly a 5×5 grid so that every image benefits from tiled inference, even on CPU-only Docker. |
 | `IMAGE_UPSCALING_MIN_REALESRGAN_SCALE` | Smallest requested upscale factor that still triggers Real-ESRGAN (default `1.05`). Set to `1.0` to always run the AI upscaler even for near-1× touch-ups, or raise it if you prefer to skip Real-ESRGAN for tiny adjustments. |
-| `IMAGE_EAGER_PREUPSCALE` | `true` forces every uploaded image through the upscaler before detection; default `false` so only the retry path performs heavy upscaling. |
-| `IBM_MAX_ENABLED` / `IBM_MAX_URL` / `IBM_MAX_TIMEOUT` | Toggle the IBM MAX Image Resolution Enhancer client, set its base URL, and override HTTP timeout (defaults: disabled, 120s). |
-| `IBM_MAX_HOST_PORT` | Host-side port that exposes the IBM MAX health/API endpoint (default `5100`); useful when `localhost:5000` is already reserved. |
-| `IBM_MAX_PLATFORM` | Docker platform string passed to the IBM MAX service (default `linux/amd64`); set to `linux/amd64` on Apple Silicon so QEMU emulation runs the upstream image. |
+| `IBM_MAX_ENABLED` / `IBM_MAX_URL` / `IBM_MAX_TIMEOUT` | Toggle the IBM MAX Image Resolution Enhancer client, set its base URL, and override HTTP timeout. Note: `docker-compose.yml` disables IBM MAX by default for portability; `.env.example` shows an opt-in configuration. |
+| `IBM_MAX_HOST_PORT` | Docker/Compose-only variable (not read by the Python app). Controls which host port maps to the IBM MAX container when you run the optional `ibm-max` service. |
+| `IBM_MAX_PLATFORM` | Docker/Compose-only variable (not read by the Python app). Sets the `platform:` for the optional IBM MAX service (typically `linux/amd64`). |
 | `IBM_MAX_FAILURE_THRESHOLD` | Number of consecutive IBM MAX call failures allowed before the client auto-disables for the session (default `3`). |
-| `IBM_MAX_PROBE_ON_START` | `true` probes `/model/metadata` on startup and disables IBM MAX immediately if the local sidecar cannot be reached (default `true`). |
+| `IBM_MAX_PROBE_ON_START` | `true` probes `/model/metadata` on startup and disables IBM MAX immediately if the endpoint cannot be reached (code default `false`). |
 | `NCNN_UPSCALING_ENABLED` / `NCNN_EXEC_PATH` / `NCNN_MODEL_NAME` | Configure the standalone Real-ESRGAN NCNN Vulkan executable path, model, and tiling so it can act as the next fallback when IBM MAX is unavailable. |
+| `MULTI_BACKEND_EXTRACTION` | When `true` (default), tries original + multiple preprocessing backends to maximize successful embedding extraction. |
+| `IMAGE_UPSCALING_BACKEND_PRIORITY` | Comma-separated backend order (default `realesrgan,opencv,lanczos`) used for automatic fallback selection. |
+| `MAX_IMAGE_SIZE` / `MAX_VIDEO_SIZE` | Maximum upload sizes (bytes) for images/videos. |
+| `VIDEO_FRAME_STRIDE` / `VIDEO_MAX_FRAMES` | Video sampling controls for video upload/search/add flows. |
+| `EMBEDDING_CACHE_TTL_LOCAL` / `EMBEDDING_CACHE_TTL_FIRESTORE` | Ultra-fast (in-memory) embedding cache TTLs for fast-mode search paths. |
 | `LOCAL_DB_PATH` | Path to JSON database (default `data/faces_database.json`). |
-| `DB_TYPE` | `local` (JSON) or `firestore`; controls which backend `FaceDatabase` instantiates. |
+| `DB_TYPE` | `local`, `firestore`, `realtime`, or `firebase` (Realtime preferred → Firestore fallback → local fallback); controls which backend `FaceDatabase` instantiates. |
+| `FIREBASE_DATABASE_URL` | Realtime Database URL (e.g. `https://<project>.firebaseio.com`). |
+| `FIREBASE_DB_ROOT` | Realtime Database root path (default `faces_database`). |
+| `REALTIME_DELTA_EMBEDDINGS` | When `true` (default), Realtime DB writes patch only missing embedding keys instead of re-uploading whole records. |
+| `REALTIME_STORE_PROFILE_EMBEDDING` | When `true`, persists per-username centroid embeddings to Firebase; default `false` to minimize payload size. |
+| `LIVE_AUTO_ENRICH_ENABLED` | Enables live-camera auto-enrichment after confident matches (default `true`). |
+| `LIVE_AUTO_ENRICH_FLUSH_SECONDS` | Batch flush interval for live-camera enrichment (default `2`). |
+| `LIVE_AUTO_ENRICH_MAX_PENDING` | Batch size threshold for live-camera enrichment flush (default `25`). |
+| `LIVE_AUTO_ENRICH_COOLDOWN_SECONDS` | Per-username cooldown for live enrichment to prevent spam (default `0`). |
+| `ULTRA_FAST_EMBEDDING_KEY` | Embedding key used by ultra-fast search (default `dlib`). |
 | `FIRESTORE_DATABASE_ID` | Firestore database ID (default `(default)`). |
 | `FIRESTORE_LOCATION_ID` | Region for Firestore (e.g. `us-central`, `nam5`). |
 | `UPSCALE_RETRY_ENABLED` | Enables the “detect → upscale → retry” workflow when faces/embeddings/matches aren’t found (default `true`). |
@@ -185,7 +242,7 @@ Key environment variables (see `src/config.py` for defaults):
 
 Add optional secrets (Firebase, etc.) via `.env` or environment-specific config classes.
 
-### Using Firestore instead of the local JSON database
+### Using Firestore or Firebase Realtime Database instead of the local JSON database
 
 The data layer can be switched to **Google Cloud Firestore (native mode)** so that no facial embeddings are ever written to local disk. To connect the app to your project:
 
@@ -194,7 +251,8 @@ The data layer can be switched to **Google Cloud Firestore (native mode)** so th
 3. **Install the cloud persistence dependencies** (`firebase-admin`, `google-cloud-firestore`, `google-auth`) using `pip install -r requirements.txt`, then export the following variables before running Streamlit or the Docker image:
 
     ```bash
-    export DB_TYPE=firestore               # tells FaceDatabase to use Firestore
+    # Firestore (forced)
+    export DB_TYPE=firestore
     export FIREBASE_ENABLED=true           # optional flag used elsewhere in the app
     export FIREBASE_PROJECT_ID="your-project-id"
     export FIREBASE_CONFIG_PATH="$PWD/config/firebase_config.json"
@@ -203,17 +261,40 @@ The data layer can be switched to **Google Cloud Firestore (native mode)** so th
     export FIRESTORE_LOCATION_ID="us-central"            # region/nam5/etc from step 1
     ```
 
+    ```bash
+    # Firebase Realtime Database (forced)
+    export DB_TYPE=realtime
+    export FIREBASE_ENABLED=true
+    export FIREBASE_PROJECT_ID="your-project-id"
+    export FIREBASE_CONFIG_PATH="$PWD/config/firebase_config.json"
+    export FIREBASE_DATABASE_URL="https://<project>.firebaseio.com"
+    export FIREBASE_DB_ROOT="faces_database"  # optional
+    ```
+
+    ```bash
+    # Auto mode: prefer Realtime Database, fall back to Firestore, then local JSON
+    export DB_TYPE=firebase
+    export FIREBASE_ENABLED=true
+    export FIREBASE_PROJECT_ID="your-project-id"
+    export FIREBASE_CONFIG_PATH="$PWD/config/firebase_config.json"
+    export FIREBASE_DATABASE_URL="https://<project>.firebaseio.com"  # used on fallback
+    ```
+
     When running in Docker, mount the credentials file (e.g. `-v $PWD/config/firebase_config.json:/app/config/firebase_config.json:ro`) and pass the same environment variables via `docker compose`.
 
 4. Start the app (`streamlit run src/app.py` or `docker compose up`). If the `(default)` database is missing, SocialVision will invoke the Firestore Admin API (using your service account) to create it in the region you specified. Afterwards, the backend creates two collections—`<prefix>faces` and `<prefix>profiles`—and every new embedding bundle is written directly to Firestore. Profile centroids stay cached in `<prefix>profiles` for fast identity searches.
 
 With `DB_TYPE=firestore`, the project never exports face data to `data/faces_database.json`; enrichment, search, and analytics all operate against Firestore in real time.
 
+With `DB_TYPE=realtime` (or `DB_TYPE=firebase` when Realtime DB is available), writes are incremental and enrichment prefers **delta-only patches** (upload only missing embedding keys).
+
 ---
 
 ## Documentation Map
 
 - **[docs/README.md](docs/README.md)** – navigation hub.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** – UML diagrams + end-to-end processing flows.
+- **[docs/API_USAGE.md](docs/API_USAGE.md)** – FastAPI endpoints + runnable examples.
 - **[docs/CURRENT_CAPABILITIES.md](docs/CURRENT_CAPABILITIES.md)** – quick reference for what works today.
 - **[docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** – phase progress, KPIs, and blocking issues.
 - **[docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md)** – manual + automated test instructions.
@@ -236,6 +317,10 @@ pytest tests/test_search_engine.py -v
 All three suites are CI-friendly and cover the dual-embedding engine, bundle-aware database, and enrichment logic.
 
 ---
+
+## Keywords & Domains
+
+facial recognition · computer vision · deep learning · machine learning · identity verification · face detection · biometric systems · AI pipelines · self-training systems · adaptive learning · real-time vision · dataset enrichment · Python · OpenCV · DeepFace · Streamlit
 
 ## Roadmap & Contributing
 
